@@ -6,7 +6,6 @@
 pthread_t* initThreads(threadpool*, int);
 void enqueue_job(threadpool*, work_t*);
 
-
 //TODO add error handling for pthread methods (such as pthread_cond etc)
 
 
@@ -80,6 +79,9 @@ pthread_t* initThreads(threadpool* pool, int num_of_threads) {
 
 void dispatch(threadpool* from_me, dispatch_fn dispath_to_here, void* arg) {
 
+        if(from_me->dont_accept)
+                return;
+
         work_t* new_job = (work_t*)calloc(1, sizeof(work_t));
         if(new_job == NULL) {
                 perror("calloc");
@@ -107,11 +109,15 @@ void enqueue_job(threadpool* pool, work_t* job) {
 
                 pool->qhead = job;
                 pool->qtail = job;
+                pool->qsize++;
                 pthread_cond_signal(&pool->q_empty);
                 return;
         }
 
-        //TODO Handle other queue conditions
+        pool->qtail->next = job;
+        pool->qtail = job;
+        pool->qsize++;
+        return;
 
 }
 
@@ -128,6 +134,7 @@ void* do_work(void* p) {
         pthread_mutex_t* qlock = &pool->qlock;
 
         while(1) {
+
                 pthread_mutex_lock(qlock);
 
                 if(pool->shutdown) {
@@ -143,11 +150,55 @@ void* do_work(void* p) {
                         pthread_exit(0);
                 }
 
-                //dequeueing job
+                //dequeue job
                 work_t* job = pool->qhead;
                 pool->qhead = job->next;
+                pool->qsize--;
 
+                // if(was full)
+                //         cond_signal //dispatch unlock
+
+                //notify destroy function
+                if(!pool->qsize && pool->dont_accept)
+                        pthread_cond_signal(&pool->q_not_empty);
+
+                pthread_mutex_unlock(qlock);
+
+                //run job
                 job->routine(job->arg);
+                free(job);
         }
+}
+
+/******************************************************************************/
+/******************************************************************************/
+/******************************************************************************/
+
+
+void destroy_threadpool(threadpool* destroyme) {
+
+        pthread_mutex_lock(&destroyme->qlock);
+
+        destroyme->dont_accept = 1;
+
+        //wait until queue is empty
+        if(destroyme->qsize)
+                pthread_cond_wait(&destroyme->q_not_empty, &destroyme->qlock);
+
+        //wake sleeping threads
+        pthread_cond_signal(&destroyme->q_empty);
+
+        destroyme->shutdown = 1;
+
+        int i;
+        for(i = 0; i < destroyme->num_threads; i++) {
+                pthread_join(destroyme->threads[i], NULL);
+        }
+
+        free(destroyme->threads);
+        pthread_cond_destroy(&destroyme->q_empty);
+        pthread_cond_destroy(&destroyme->q_not_empty);
+        pthread_mutex_destroy(&destroyme->qlock);
+        free(destroyme);
 
 }
