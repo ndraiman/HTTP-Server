@@ -2,6 +2,8 @@
 
 #### Computer Networking Application Course - Exercise 3
 
+<b>(IN PROGRESS)</b>
+
 <br/>
 Simple implementation of a HTTP server
 
