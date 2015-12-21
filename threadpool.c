@@ -6,9 +6,6 @@
 pthread_t* initThreads(threadpool*, int);
 void enqueue_job(threadpool*, work_t*);
 
-//TODO add error handling for pthread methods (such as pthread_cond etc)
-
-
 /******************************************************************************/
 /******************************************************************************/
 /******************************************************************************/
@@ -18,7 +15,6 @@ threadpool* create_threadpool(int num_threads_in_pool) {
         if(num_threads_in_pool <= 0 || num_threads_in_pool > MAXT_IN_POOL)
                 return NULL;
 
-        printf("create_threadpool\n"); //DEBUG
         threadpool* pool = (threadpool*)calloc(1, sizeof(threadpool));
         if(pool == NULL) {
                 perror("calloc");
@@ -55,7 +51,6 @@ threadpool* create_threadpool(int num_threads_in_pool) {
 /*********************************/
 
 pthread_t* initThreads(threadpool* pool, int num_of_threads) {
-        printf("initThreads\n"); //DEBUG
 
         pthread_t* threads = (pthread_t*)calloc(num_of_threads, sizeof(pthread_t));
         if(threads == NULL) {
@@ -66,12 +61,10 @@ pthread_t* initThreads(threadpool* pool, int num_of_threads) {
         int i;
         for(i = 0; i < num_of_threads; i++) {
 
-                printf("creating thread #%d\n", i); //DEBUG
                 if(pthread_create(&threads[i], NULL, do_work, pool)) {
                         perror("pthread_create");
                         exit(-1);
                 }
-                printf("tid[%d] = %d\n", i, (int)threads[i]); //DEBUG
         }
 
         return threads;
@@ -83,7 +76,7 @@ pthread_t* initThreads(threadpool* pool, int num_of_threads) {
 
 
 void dispatch(threadpool* from_me, dispatch_fn dispath_to_here, void* arg) {
-        printf("dispatch\n"); //DEBUG
+
         pthread_mutex_lock(&from_me->qlock);
 
         if(from_me->dont_accept) {
@@ -112,7 +105,7 @@ void dispatch(threadpool* from_me, dispatch_fn dispath_to_here, void* arg) {
 /*********************************/
 
 void enqueue_job(threadpool* pool, work_t* job) {
-        printf("enqueue_job\n"); //DEBUG
+
         if(pool->qsize == 0) {
 
                 pool->qhead = job;
@@ -134,32 +127,25 @@ void enqueue_job(threadpool* pool, work_t* job) {
 /******************************************************************************/
 
 void* do_work(void* p) {
-        printf("do_work - tid: %d\n", (int)pthread_self()); //DEBUG
+
         if(p == NULL)
                 return 0;
 
         threadpool* pool = (threadpool*) p;
 
-
         while(1) {
-                printf("Locking mutex - tid: %d\n", (int)pthread_self()); //DEBUG
+
                 pthread_mutex_lock(&pool->qlock);
-                printf("IN CRITICAL ZONE - tid: %d\n", (int)pthread_self()); //DEBUG
+
                 if(pool->shutdown) {
-                        printf("thread shutting down - tid: %d\n", (int)pthread_self()); //DEBUG
                         pthread_mutex_unlock(&pool->qlock);
                         return 0;
                 }
 
-                if(!(pool->qsize)) {
-                        printf("thread waiting for job - tid: %d\n", (int)pthread_self()); //DEBUG
+                if(!(pool->qsize))
                         pthread_cond_wait(&pool->q_empty, &pool->qlock);
-                }
-
-                printf("thread awake - tid: %d\n", (int)pthread_self()); //DEBUG
 
                 if(pool->shutdown) {
-                        printf("thread shutting down - tid: %d\n", (int)pthread_self()); //DEBUG
                         pthread_mutex_unlock(&pool->qlock);
                         return 0;
                 }
@@ -175,13 +161,11 @@ void* do_work(void* p) {
                 if(!pool->qsize && pool->dont_accept)
                         pthread_cond_signal(&pool->q_not_empty);
 
-                printf("Unlocking mutex - tid: %d\n", (int)pthread_self()); //DEBUG
                 pthread_mutex_unlock(&pool->qlock);
 
                 //run job
                 job->routine(job->arg);
                 free(job);
-                printf("finished do_work - tid: %d\n", (int)pthread_self()); //DEBUG
         }
 }
 
@@ -191,7 +175,7 @@ void* do_work(void* p) {
 
 
 void destroy_threadpool(threadpool* destroyme) {
-        printf("destroy_threadpool\n"); //DEBUG
+
         pthread_mutex_lock(&destroyme->qlock);
 
         destroyme->dont_accept = 1;
@@ -200,20 +184,16 @@ void destroy_threadpool(threadpool* destroyme) {
         if(destroyme->qsize != 0)
                 pthread_cond_wait(&destroyme->q_not_empty, &destroyme->qlock);
 
-        printf("queue empty\n"); //DEBUG
         destroyme->shutdown = 1;
         //wake sleeping threads
         pthread_cond_broadcast(&destroyme->q_empty);
 
-        printf("sleeping threads awake\n"); //DEBUG
         pthread_mutex_unlock(&destroyme->qlock);
         int i;
-        for(i = 0; i < destroyme->num_threads; i++) {
-                printf("waiting on thread #%d - tid: %d\n", i, (int)destroyme->threads[i]);//DEBUG
+        for(i = 0; i < destroyme->num_threads; i++)
                 pthread_join(destroyme->threads[i], NULL);
-        }
 
-        printf("Destroying threadpool\n"); //DEBUG
+
         pthread_mutex_destroy(&destroyme->qlock);
         pthread_cond_destroy(&destroyme->q_empty);
         pthread_cond_destroy(&destroyme->q_not_empty);
