@@ -31,7 +31,7 @@ int main() {
         for(i = 0; i < num_of_jobs; i ++) {
 
                 y[i] = rand();
-                debug_print("Main - dispatching job with x = %d\n", y[i]);
+                debug_print("Main - dispatching job with y = %d\n", y[i]);
                 dispatch(pool, avoda, (void*)(&(y[i])));
 
         }

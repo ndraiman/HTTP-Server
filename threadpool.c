@@ -33,15 +33,15 @@ threadpool* create_threadpool(int num_threads_in_pool) {
         pool->dont_accept = 0;
 
         if(pthread_mutex_init(&pool->qlock, NULL)) {
-                perror("pthread_mutex_init");
+                fprintf(stderr, "pthread_mutex_init");
                 exit(-1);
         }
         if(pthread_cond_init(&pool->q_not_empty, NULL)) {
-                perror("pthread_cond_init");
+                fprintf(stderr, "pthread_cond_init");
                 exit(-1);
         }
         if(pthread_cond_init(&pool->q_empty, NULL)) {
-                perror("pthread_cond_init");
+                fprintf(stderr, "pthread_cond_init");
                 exit(-1);
         }
 
@@ -66,7 +66,7 @@ pthread_t* initThreads(threadpool* pool, int num_of_threads) {
         for(i = 0; i < num_of_threads; i++) {
 
                 if(pthread_create(&threads[i], NULL, do_work, pool)) {
-                        perror("pthread_create");
+                        fprintf(stderr, "pthread_create");
                         exit(-1);
                 }
         }
