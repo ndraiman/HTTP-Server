@@ -85,10 +85,7 @@ void dispatch(threadpool* from_me, dispatch_fn dispath_to_here, void* arg) {
                 fprintf(stderr, "dispatch - param passed is NULL\n");
                 return;
         }
-
-        if(from_me->shutdown)
-                return;
-
+		
         debug_print("%s\n", "dispatch");
         pthread_mutex_lock(&from_me->qlock);
 
