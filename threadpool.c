@@ -80,11 +80,14 @@ pthread_t* initThreads(threadpool* pool, int num_of_threads) {
 
 
 void dispatch(threadpool* from_me, dispatch_fn dispath_to_here, void* arg) {
-        
+
         if(from_me == NULL || dispath_to_here == NULL) {
                 fprintf(stderr, "dispatch - param passed is NULL\n");
                 return;
         }
+
+        if(from_me->shutdown)
+                return;
 
         debug_print("%s\n", "dispatch");
         pthread_mutex_lock(&from_me->qlock);
