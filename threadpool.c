@@ -8,7 +8,7 @@
            do { if (DEBUG) fprintf(stderr, fmt, __VA_ARGS__); } while (0)
 
 pthread_t* initThreads(threadpool*, int);
-void enqueue_job(threadpool*, work_t*);
+int enqueue_job(threadpool*, work_t*);
 
 /******************************************************************************/
 /******************************************************************************/
@@ -33,15 +33,15 @@ threadpool* create_threadpool(int num_threads_in_pool) {
         pool->dont_accept = 0;
 
         if(pthread_mutex_init(&pool->qlock, NULL)) {
-                fprintf(stderr, "pthread_mutex_init");
+                fprintf(stderr, "pthread_mutex_init\n");
                 exit(-1);
         }
         if(pthread_cond_init(&pool->q_not_empty, NULL)) {
-                fprintf(stderr, "pthread_cond_init");
+                fprintf(stderr, "pthread_cond_init\n");
                 exit(-1);
         }
         if(pthread_cond_init(&pool->q_empty, NULL)) {
-                fprintf(stderr, "pthread_cond_init");
+                fprintf(stderr, "pthread_cond_init\n");
                 exit(-1);
         }
 
@@ -66,7 +66,7 @@ pthread_t* initThreads(threadpool* pool, int num_of_threads) {
         for(i = 0; i < num_of_threads; i++) {
 
                 if(pthread_create(&threads[i], NULL, do_work, pool)) {
-                        fprintf(stderr, "pthread_create");
+                        fprintf(stderr, "pthread_create\n");
                         exit(-1);
                 }
         }
@@ -85,9 +85,12 @@ void dispatch(threadpool* from_me, dispatch_fn dispath_to_here, void* arg) {
                 fprintf(stderr, "dispatch - param passed is NULL\n");
                 return;
         }
-		
+
         debug_print("%s\n", "dispatch");
-        pthread_mutex_lock(&from_me->qlock);
+        if(pthread_mutex_lock(&from_me->qlock)) {
+                fprintf(stderr, "pthread_mutex_lock\n");
+                return;
+        }
 
         if(from_me->dont_accept) {
                 pthread_mutex_unlock(&from_me->qlock);
@@ -105,7 +108,8 @@ void dispatch(threadpool* from_me, dispatch_fn dispath_to_here, void* arg) {
         new_job->arg = arg;
         new_job->next = NULL;
 
-        enqueue_job(from_me, new_job);
+        if(enqueue_job(from_me, new_job))
+                return;
         debug_print("\t%s\n", "done");
         pthread_mutex_unlock(&from_me->qlock);
 }
@@ -114,21 +118,25 @@ void dispatch(threadpool* from_me, dispatch_fn dispath_to_here, void* arg) {
 /*********************************/
 /*********************************/
 
-void enqueue_job(threadpool* pool, work_t* job) {
+int enqueue_job(threadpool* pool, work_t* job) {
         debug_print("\t%s\n", "enqueue_job");
         if(pool->qsize == 0) {
                 debug_print("\t\t%s\n", "1st job");
                 pool->qhead = job;
                 pool->qtail = job;
                 pool->qsize++;
-                pthread_cond_signal(&pool->q_empty);
-                return;
+                if(pthread_cond_signal(&pool->q_empty)) {
+                        pthread_mutex_unlock(&pool->qlock);
+                        fprintf(stderr, "pthread_cond_signal\n");
+                        return -1;
+                }
+                return 0;
         }
 
         pool->qtail->next = job;
         pool->qtail = job;
         pool->qsize++;
-        return;
+        return 0;
 
 }
 
@@ -147,7 +155,10 @@ void* do_work(void* p) {
 
         while(1) {
                 debug_print("\t attemping mutex - tid = %d\n", (int)pthread_self());
-                pthread_mutex_lock(&pool->qlock);
+                if(pthread_mutex_lock(&pool->qlock)) {
+                        fprintf(stderr, "pthread_mutex_lock\n");
+                        return 0;
+                }
                 debug_print("\t i got mutex - tid = %d\n", (int)pthread_self());
                 if(pool->shutdown) {
                         pthread_mutex_unlock(&pool->qlock);
@@ -157,7 +168,11 @@ void* do_work(void* p) {
 
                 if(!(pool->qsize)) {
                         debug_print("\tqueue empty -> waiting - tid = %d\n", (int)pthread_self());
-                        pthread_cond_wait(&pool->q_empty, &pool->qlock);
+                        if(pthread_cond_wait(&pool->q_empty, &pool->qlock)) {
+                                pthread_mutex_unlock(&pool->qlock);
+                                fprintf(stderr, "pthread_cond_wait\n");
+                                return 0;
+                        }
                 }
 
                 if(pool->shutdown) {
@@ -176,7 +191,11 @@ void* do_work(void* p) {
                 //notify destroy function
                 if(!pool->qsize && pool->dont_accept) {
                         debug_print("\nnotifying destory - tid = %d\n", (int)pthread_self());
-                        pthread_cond_signal(&pool->q_not_empty);
+                        if(pthread_cond_signal(&pool->q_not_empty)) {
+                                pthread_mutex_unlock(&pool->qlock);
+                                fprintf(stderr, "pthread_cond_wait\n");
+                                return 0;
+                        }
                 }
                 debug_print("\tunlocking mutex - tid = %d\n", (int)pthread_self());
                 pthread_mutex_unlock(&pool->qlock);
@@ -202,14 +221,21 @@ void destroy_threadpool(threadpool* destroyme) {
         }
 
         debug_print("%s\n", "destroy_threadpool");
-        pthread_mutex_lock(&destroyme->qlock);
+        if(pthread_mutex_lock(&destroyme->qlock)) {
+                fprintf(stderr, "pthread_mutex_lock\n");
+                return;
+        }
 
         destroyme->dont_accept = 1;
 
         //wait until queue is empty
         if(destroyme->qsize != 0) {
                 debug_print("\t%s\n", "queue isnt empty -> waiting");
-                pthread_cond_wait(&destroyme->q_not_empty, &destroyme->qlock);
+                if(pthread_cond_wait(&destroyme->q_not_empty, &destroyme->qlock)) {
+                        pthread_mutex_unlock(&destroyme->qlock);
+                        fprintf(stderr, "pthread_cond_wait\n");
+                        return;
+                }
         }
 
         debug_print("%s\n", "queue is empty");
