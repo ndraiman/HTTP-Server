@@ -4,12 +4,29 @@
 #include <netdb.h>
 #include "threadpool.h"
 
-
+#define RFC1123FMT "%a, %d %b %Y %H:%M:%S GMT"
 #define MAX_REQUEST_LENGHT 4000
 #define MAX_ENTITY_LINE 500
 #define MAX_PORT 65535
 #define NUM_OF_COMMANDS 4
 #define PRINT_WRONG_CMD_USAGE "Usage: server <port> <pool-size> <max-number-of-request>\n"
+
+/***** Response Codes *****/
+const int code_ok = 200;
+const int code_found = 302;
+const int code_bad = 400;
+const int code_forbidden = 403;
+const int code_not_found = 404;
+const int code_server_error = 500;
+const int code_not_supported = 501;
+
+#define RESPONSE_OK "200 OK\r\n"
+#define RESPONSE_FOUND "302 Found\r\n"
+#define RESPONSE_BAD_REQUEST "400 Bad Request\r\n"
+#define RESPONSE_FORBIDDEN "403 Forbidden\r\n"
+#define RESPONSE_NOT_FOUND "404 Not Found\r\n"
+#define RESPONSE_SERVER_ERROR "500 Internal Server Error\r\n"
+#define RESPONSE_NOT_SUPPORTED "501 Not Supported\r\n"
 
 static int sPort = 0;
 static int sPoolSize = 0;
@@ -19,6 +36,8 @@ int parseArguments(int, char**);
 int verifyPort(char*);
 int initServer();
 void initServerSocket(int*);
+
+char* readRequest(int*);
 
 /******************************************************************************/
 /******************************************************************************/
@@ -87,6 +106,55 @@ int verifyPort(char* port_string) {
 /******************************************************************************/
 /******************************************************************************/
 
+char* constructResponse(int type) {
+
+        char response_type[128] = "HTTP/1.0 ";
+        switch (type) {
+
+                case code_ok:
+                strcat(response_type, RESPONSE_OK);
+                break;
+
+                case code_found:
+                strcat(response_type, RESPONSE_FOUND);
+                break;
+
+                case code_bad:
+                strcat(response_type, RESPONSE_BAD_REQUEST);
+                break;
+
+                case code_forbidden:
+                strcat(response_type, RESPONSE_FORBIDDEN);
+                break;
+
+                case code_not_found:
+                strcat(response_type, RESPONSE_NOT_FOUND);
+                break;
+
+                case code_server_error:
+                strcat(response_type, RESPONSE_SERVER_ERROR);
+                break;
+
+                case code_not_supported:
+                strcat(response_type, RESPONSE_NOT_SUPPORTED);
+                break;
+
+        }
+
+        char server_header[128] = "Server: webserver/1.0\r\n";
+
+        //Get Date
+        char date_string[128];
+        time_t now;
+        now = time(NULL);
+        strftime(date_string, sizeof(date_string), RFC1123FMT, gmtime(&now));
+        //date_string holds the correct format of the current time.
+        strcat(date_string, "\r\n");
+
+        //TODO continue implementation
+
+}
+
 int initServer() {
 
         int server_socket = 0;
@@ -98,18 +166,27 @@ int initServer() {
         int new_sockfd;
         int cli_length = sizeof(cli);
 
+        int i;
+        for(i = 0; i < sMaxRequests; i++) {
 
-        if((new_sockfd = accept(server_socket, (struct sockaddr*) &cli, (socklen_t*) &cli_length)) < 0) {
-        	perror("accept");
-                exit(1);
+                if((new_sockfd = accept(server_socket, (struct sockaddr*) &cli, (socklen_t*) &cli_length)) < 0) {
+                	perror("accept");
+                        exit(1);
+                }
+
+                //TODO
+                char* request = readRequest(&new_sockfd);
+                //
+                // writeResponse();
+
+                // close(new_sockfd);
         }
-
-        //TODO
-        // readRequest()
-        //
-        // writeResponse();
-
         return 0;
+}
+
+char* readRequest(int* sockfd) {
+
+        return NULL;
 }
 
 /*********************************/
@@ -141,3 +218,7 @@ void initServerSocket(int* sockfd) {
 
 
 }
+
+/******************************************************************************/
+/******************************************************************************/
+/******************************************************************************/
