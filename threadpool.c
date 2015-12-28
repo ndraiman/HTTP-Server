@@ -80,6 +80,12 @@ pthread_t* initThreads(threadpool* pool, int num_of_threads) {
 
 
 void dispatch(threadpool* from_me, dispatch_fn dispath_to_here, void* arg) {
+        
+        if(from_me == NULL || dispath_to_here == NULL) {
+                fprintf(stderr, "dispatch - param passed is NULL\n");
+                return;
+        }
+
         debug_print("%s\n", "dispatch");
         pthread_mutex_lock(&from_me->qlock);
 
@@ -132,8 +138,10 @@ void enqueue_job(threadpool* pool, work_t* job) {
 
 void* do_work(void* p) {
         debug_print("do_work - tid = %d\n", (int)pthread_self());
-        if(p == NULL)
+        if(p == NULL) {
+                fprintf(stderr, "do_work - param passed is NULL\n");
                 return 0;
+        }
 
         threadpool* pool = (threadpool*) p;
 
@@ -187,6 +195,12 @@ void* do_work(void* p) {
 
 
 void destroy_threadpool(threadpool* destroyme) {
+
+        if(destroyme == NULL) {
+                fprintf(stderr, "destroy_threadpool - param passed is NULL\n");
+                return;
+        }
+
         debug_print("%s\n", "destroy_threadpool");
         pthread_mutex_lock(&destroyme->qlock);
 
