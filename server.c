@@ -1,8 +1,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 #include <netdb.h>
 #include "threadpool.h"
+
+#define DEBUG 1
+#define debug_print(fmt, ...) \
+           do { if (DEBUG) fprintf(stderr, fmt, __VA_ARGS__); } while (0)
+
 
 #define RFC1123FMT "%a, %d %b %Y %H:%M:%S GMT"
 #define MAX_REQUEST_LENGHT 4000
@@ -10,6 +16,9 @@
 #define MAX_PORT 65535
 #define NUM_OF_COMMANDS 4
 #define PRINT_WRONG_CMD_USAGE "Usage: server <port> <pool-size> <max-number-of-request>\n"
+
+#define BUFFER_SIZE 512
+#define REQUEST_SIZE 1024
 
 /***** Response Codes *****/
 const int code_ok = 200;
@@ -37,7 +46,7 @@ int verifyPort(char*);
 int initServer();
 void initServerSocket(int*);
 
-char* readRequest(int*);
+int readRequest(char**, int, int*);
 char *get_mime_type(char*);
 
 /******************************************************************************/
@@ -107,69 +116,69 @@ int verifyPort(char* port_string) {
 /******************************************************************************/
 /******************************************************************************/
 
-char* constructResponse(int type) {
-
-        char type_string[128];
-        char location[128] = "";
-        switch (type) {
-
-        case code_ok:
-                strcat(type_string, RESPONSE_OK);
-                break;
-
-        case code_found:
-                strcat(type_string, RESPONSE_FOUND);
-                sprintf(location, "Location: path + /"); //TODO replace with file path
-                break;
-
-        case code_bad:
-                strcat(type_string, RESPONSE_BAD_REQUEST);
-                break;
-
-        case code_forbidden:
-                strcat(type_string, RESPONSE_FORBIDDEN);
-                break;
-
-        case code_not_found:
-                strcat(type_string, RESPONSE_NOT_FOUND);
-                break;
-
-        case code_server_error:
-                strcat(type_string, RESPONSE_SERVER_ERROR);
-                break;
-
-        case code_not_supported:
-                strcat(type_string, RESPONSE_NOT_SUPPORTED);
-                break;
-
-        }
-
-        char response_type[128];
-        sprintf(response_type, "HTTP/1.0 %s\r\n", type_string);
-
-        char server_header[64] = "Server: webserver/1.0\r\n";
-
-        //Get Date
-        char date_string[256];
-        char timebuf[128];
-        time_t now;
-        now = time(NULL);
-        strftime(timebuf, sizeof(timebuf), RFC1123FMT, gmtime(&now));
-        //date_string holds the correct format of the current time.
-        sprintf(date_string, "Date: %s\r\n", timebuf);
-
-
-        char content_type[128];
-        sprintf(content_type, "Content-Type: %s\r\n", get_mime_type("filename.ext")); //TODO replace with filename
-
-        char content_length[128];
-        sprintf(content_length, "Content-Length: %d\r\n", (int)strlen("response body")); //TODO replace with response body variable
-
-        char last_modified[128];
-        sprintf(last_modified, "Last Modified: %s\r\n", "last modification date"); //TODO replace with modification date
-
-        char connection[64] = "Connection: close\r\n\r\n";
-}
+// char* constructResponse(int type) {
+//
+//         char type_string[128];
+//         char location[128] = "";
+//         switch (type) {
+//
+//         case code_ok:
+//                 strcat(type_string, RESPONSE_OK);
+//                 break;
+//
+//         case code_found:
+//                 strcat(type_string, RESPONSE_FOUND);
+//                 sprintf(location, "Location: path + /"); //TODO replace with file path
+//                 break;
+//
+//         case code_bad:
+//                 strcat(type_string, RESPONSE_BAD_REQUEST);
+//                 break;
+//
+//         case code_forbidden:
+//                 strcat(type_string, RESPONSE_FORBIDDEN);
+//                 break;
+//
+//         case code_not_found:
+//                 strcat(type_string, RESPONSE_NOT_FOUND);
+//                 break;
+//
+//         case code_server_error:
+//                 strcat(type_string, RESPONSE_SERVER_ERROR);
+//                 break;
+//
+//         case code_not_supported:
+//                 strcat(type_string, RESPONSE_NOT_SUPPORTED);
+//                 break;
+//
+//         }
+//
+//         char response_type[128];
+//         sprintf(response_type, "HTTP/1.0 %s\r\n", type_string);
+//
+//         char server_header[64] = "Server: webserver/1.0\r\n";
+//
+//         //Get Date
+//         char date_string[256];
+//         char timebuf[128];
+//         time_t now;
+//         now = time(NULL);
+//         strftime(timebuf, sizeof(timebuf), RFC1123FMT, gmtime(&now));
+//         //date_string holds the correct format of the current time.
+//         sprintf(date_string, "Date: %s\r\n", timebuf);
+//
+//
+//         char content_type[128];
+//         sprintf(content_type, "Content-Type: %s\r\n", get_mime_type("filename.ext")); //TODO replace with filename
+//
+//         char content_length[128];
+//         sprintf(content_length, "Content-Length: %d\r\n", (int)strlen("response body")); //TODO replace with response body variable
+//
+//         char last_modified[128];
+//         sprintf(last_modified, "Last Modified: %s\r\n", "last modification date"); //TODO replace with modification date
+//
+//         char connection[64] = "Connection: close\r\n\r\n";
+// }
 
 int initServer() {
 
@@ -191,7 +200,13 @@ int initServer() {
                 }
 
                 //TODO
-                char* request = readRequest(&new_sockfd);
+                char* request = (char*)calloc(REQUEST_SIZE, sizeof(char));
+
+                if(readRequest(&request, REQUEST_SIZE, &new_sockfd)) {
+                        //TODO send response: bad request
+                        return -1;
+                }
+                debug_print("Request = \n%s\n", request);
                 //
                 // writeResponse();
 
@@ -200,9 +215,46 @@ int initServer() {
         return 0;
 }
 
-char* readRequest(int* sockfd) {
+/*********************************/
+/*********************************/
+/*********************************/
 
-        return NULL;
+int readRequest(char** request, int request_length, int* sockfd) {
+
+        if((*request) == NULL)
+                return -1;
+
+        int nBytes;
+        char buffer[BUFFER_SIZE];
+        memset(&buffer, 0, sizeof(buffer));
+        int bytes_read = 0;
+
+        char* temp;
+
+        while((nBytes = read((*sockfd), buffer, sizeof(buffer))) > 0) {
+
+                if(nBytes < 0) {
+                        //TODO send response: bad request
+                        debug_print("%s\n", "nbytes < 0");
+                        return -1;
+                }
+
+                bytes_read += nBytes;
+
+                if(nBytes >= (request_length - bytes_read)) {
+
+                        temp = (char*)realloc((*request), (request_length *= 2));
+                        if(temp == NULL) {
+                                //TODO send response: bad request
+                                debug_print("%s\n", "temp is null");
+                                return -1;
+                        }
+                        (*request) = temp;
+                }
+                strncat((*request), buffer, nBytes);
+        }
+        //TODO check if total bytes read are needed
+        return 0;
 }
 
 /*********************************/
