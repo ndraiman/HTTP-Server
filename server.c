@@ -38,6 +38,7 @@ int initServer();
 void initServerSocket(int*);
 
 char* readRequest(int*);
+char *get_mime_type(char*);
 
 /******************************************************************************/
 /******************************************************************************/
@@ -108,51 +109,66 @@ int verifyPort(char* port_string) {
 
 char* constructResponse(int type) {
 
-        char response_type[128] = "HTTP/1.0 ";
+        char type_string[128];
+        char location[128] = "";
         switch (type) {
 
-                case code_ok:
-                strcat(response_type, RESPONSE_OK);
+        case code_ok:
+                strcat(type_string, RESPONSE_OK);
                 break;
 
-                case code_found:
-                strcat(response_type, RESPONSE_FOUND);
+        case code_found:
+                strcat(type_string, RESPONSE_FOUND);
+                sprintf(location, "Location: path + /"); //TODO replace with file path
                 break;
 
-                case code_bad:
-                strcat(response_type, RESPONSE_BAD_REQUEST);
+        case code_bad:
+                strcat(type_string, RESPONSE_BAD_REQUEST);
                 break;
 
-                case code_forbidden:
-                strcat(response_type, RESPONSE_FORBIDDEN);
+        case code_forbidden:
+                strcat(type_string, RESPONSE_FORBIDDEN);
                 break;
 
-                case code_not_found:
-                strcat(response_type, RESPONSE_NOT_FOUND);
+        case code_not_found:
+                strcat(type_string, RESPONSE_NOT_FOUND);
                 break;
 
-                case code_server_error:
-                strcat(response_type, RESPONSE_SERVER_ERROR);
+        case code_server_error:
+                strcat(type_string, RESPONSE_SERVER_ERROR);
                 break;
 
-                case code_not_supported:
-                strcat(response_type, RESPONSE_NOT_SUPPORTED);
+        case code_not_supported:
+                strcat(type_string, RESPONSE_NOT_SUPPORTED);
                 break;
 
         }
 
-        char server_header[128] = "Server: webserver/1.0\r\n";
+        char response_type[128];
+        sprintf(response_type, "HTTP/1.0 %s\r\n", type_string);
+
+        char server_header[64] = "Server: webserver/1.0\r\n";
 
         //Get Date
-        char date_string[128];
+        char date_string[256];
+        char timebuf[128];
         time_t now;
         now = time(NULL);
-        strftime(date_string, sizeof(date_string), RFC1123FMT, gmtime(&now));
+        strftime(timebuf, sizeof(timebuf), RFC1123FMT, gmtime(&now));
         //date_string holds the correct format of the current time.
-        strcat(date_string, "\r\n");
+        sprintf(date_string, "Date: %s\r\n", timebuf);
 
-        //TODO continue implementation
 
+        char content_type[128];
+        sprintf(content_type, "Content-Type: %s\r\n", get_mime_type("filename.ext")); //TODO replace with filename
+
+        char content_length[128];
+        sprintf(content_length, "Content-Length: %d\r\n", (int)strlen("response body")); //TODO replace with response body variable
+
+        char last_modified[128];
+        sprintf(last_modified, "Last Modified: %s\r\n", "last modification date"); //TODO replace with modification date
+
+        char connection[64] = "Connection: close\r\n\r\n";
 }
 
 int initServer() {
@@ -170,7 +186,7 @@ int initServer() {
         for(i = 0; i < sMaxRequests; i++) {
 
                 if((new_sockfd = accept(server_socket, (struct sockaddr*) &cli, (socklen_t*) &cli_length)) < 0) {
-                	perror("accept");
+                        perror("accept");
                         exit(1);
                 }
 
@@ -206,17 +222,52 @@ void initServerSocket(int* sockfd) {
         srv.sin_addr.s_addr = htonl(INADDR_ANY);
 
         if(bind((*sockfd), (struct sockaddr*) &srv, sizeof(srv)) < 0) {
-	        perror("bind");
+                perror("bind");
                 exit(1);
         }
 
         //TODO change int backlog
         if(listen((*sockfd), 5) < 0) {
-        	perror("listen");
-        	exit(1);
+                perror("listen");
+                exit(1);
         }
 
 
+}
+
+/******************************************************************************/
+/******************************************************************************/
+/******************************************************************************/
+
+
+char *get_mime_type(char *name)
+{
+        char *ext = strrchr(name, '.');
+        if (!ext)
+                return NULL;
+
+        if (strcmp(ext, ".html") == 0 || strcmp(ext, ".htm") == 0)
+                return "text/html";
+        if (strcmp(ext, ".jpg") == 0 || strcmp(ext, ".jpeg") == 0)
+                return "image/jpeg";
+        if (strcmp(ext, ".gif") == 0)
+                return "image/gif";
+        if (strcmp(ext, ".png") == 0)
+                return "image/png";
+        if (strcmp(ext, ".css") == 0)
+                return "text/css";
+        if (strcmp(ext, ".au") == 0)
+                return "audio/basic";
+        if (strcmp(ext, ".wav") == 0)
+                return "audio/wav";
+        if (strcmp(ext, ".avi") == 0)
+                return "video/x-msvideo";
+        if (strcmp(ext, ".mpeg") == 0 || strcmp(ext, ".mpg") == 0)
+                return "video/mpeg";
+        if (strcmp(ext, ".mp3") == 0)
+                return "audio/mpeg";
+
+        return NULL;
 }
 
 /******************************************************************************/
