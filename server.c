@@ -17,36 +17,41 @@
 #define NUM_OF_COMMANDS 4
 #define PRINT_WRONG_CMD_USAGE "Usage: server <port> <pool-size> <max-number-of-request>\n"
 
-#define BUFFER_SIZE 512
-#define REQUEST_SIZE 1024
+#define BUFFER_SIZE 2
+#define REQUEST_SIZE 64
+#define NUM_OF_EXPECTED_TOKENS 3
 
 /***** Response Codes *****/
-const int code_ok = 200;
-const int code_found = 302;
-const int code_bad = 400;
-const int code_forbidden = 403;
-const int code_not_found = 404;
-const int code_server_error = 500;
-const int code_not_supported = 501;
+#define CODE_OK 200
+#define CODE_FOUND 302
+#define CODE_BAD 400
+#define CODE_FORBIDDEN 403
+#define CODE_NOT_FOUND 404
+#define CODE_INTERNAL_ERROR 500
+#define CODE_NOT_SUPPORTED 501
 
+/***** Response Strings *****/
 #define RESPONSE_OK "200 OK\r\n"
 #define RESPONSE_FOUND "302 Found\r\n"
 #define RESPONSE_BAD_REQUEST "400 Bad Request\r\n"
 #define RESPONSE_FORBIDDEN "403 Forbidden\r\n"
 #define RESPONSE_NOT_FOUND "404 Not Found\r\n"
-#define RESPONSE_SERVER_ERROR "500 Internal Server Error\r\n"
+#define RESPONSE_INTERNAL_ERROR "500 Internal Server Error\r\n"
 #define RESPONSE_NOT_SUPPORTED "501 Not Supported\r\n"
 
 static int sPort = 0;
 static int sPoolSize = 0;
 static int sMaxRequests = 0;
+static char* sPath = NULL;
 
 int parseArguments(int, char**);
 int verifyPort(char*);
 int initServer();
 void initServerSocket(int*);
 
+int handler(void*);
 int readRequest(char**, int, int*);
+int parseRequest(char**);
 char *get_mime_type(char*);
 
 /******************************************************************************/
@@ -116,70 +121,6 @@ int verifyPort(char* port_string) {
 /******************************************************************************/
 /******************************************************************************/
 
-// char* constructResponse(int type) {
-//
-//         char type_string[128];
-//         char location[128] = "";
-//         switch (type) {
-//
-//         case code_ok:
-//                 strcat(type_string, RESPONSE_OK);
-//                 break;
-//
-//         case code_found:
-//                 strcat(type_string, RESPONSE_FOUND);
-//                 sprintf(location, "Location: path + /"); //TODO replace with file path
-//                 break;
-//
-//         case code_bad:
-//                 strcat(type_string, RESPONSE_BAD_REQUEST);
-//                 break;
-//
-//         case code_forbidden:
-//                 strcat(type_string, RESPONSE_FORBIDDEN);
-//                 break;
-//
-//         case code_not_found:
-//                 strcat(type_string, RESPONSE_NOT_FOUND);
-//                 break;
-//
-//         case code_server_error:
-//                 strcat(type_string, RESPONSE_SERVER_ERROR);
-//                 break;
-//
-//         case code_not_supported:
-//                 strcat(type_string, RESPONSE_NOT_SUPPORTED);
-//                 break;
-//
-//         }
-//
-//         char response_type[128];
-//         sprintf(response_type, "HTTP/1.0 %s\r\n", type_string);
-//
-//         char server_header[64] = "Server: webserver/1.0\r\n";
-//
-//         //Get Date
-//         char date_string[256];
-//         char timebuf[128];
-//         time_t now;
-//         now = time(NULL);
-//         strftime(timebuf, sizeof(timebuf), RFC1123FMT, gmtime(&now));
-//         //date_string holds the correct format of the current time.
-//         sprintf(date_string, "Date: %s\r\n", timebuf);
-//
-//
-//         char content_type[128];
-//         sprintf(content_type, "Content-Type: %s\r\n", get_mime_type("filename.ext")); //TODO replace with filename
-//
-//         char content_length[128];
-//         sprintf(content_length, "Content-Length: %d\r\n", (int)strlen("response body")); //TODO replace with response body variable
-//
-//         char last_modified[128];
-//         sprintf(last_modified, "Last Modified: %s\r\n", "last modification date"); //TODO replace with modification date
-//
-//         char connection[64] = "Connection: close\r\n\r\n";
-// }
-
 int initServer() {
 
         int server_socket = 0;
@@ -199,19 +140,140 @@ int initServer() {
                         exit(1);
                 }
 
-                //TODO
-                char* request = (char*)calloc(REQUEST_SIZE, sizeof(char));
+                dispatch(pool, handler, (void*)&new_sockfd);
 
-                if(readRequest(&request, REQUEST_SIZE, &new_sockfd)) {
-                        //TODO send response: bad request
-                        return -1;
-                }
-                debug_print("Request = \n%s\n", request);
-                //
-                // writeResponse();
-
-                // close(new_sockfd);
         }
+
+        //TODO free memory
+        close(new_sockfd);
+        return 0;
+}
+
+/******************************************************************************/
+/******************************************************************************/
+/******************************************************************************/
+
+int handler(void* arg) {
+
+        int* sockfd = (int*)(arg);
+
+        char* request = (char*)calloc(REQUEST_SIZE, sizeof(char));
+
+        if(readRequest(&request, REQUEST_SIZE, sockfd)) {
+                //TODO send response: bad request
+                return -1;
+        }
+        debug_print("Request = \n%s\n", request);
+
+        sPath = (char*)calloc(strlen(request), sizeof(char));
+        if(!sPath) {
+                //TODO send response: bad request
+                return -1;
+        }
+
+        int parserRetVal = parseRequest(&request);
+        if(parserRetVal) {
+
+                // if(parserRetVal == CODE_NOT_SUPPORTED)
+                        //TODO send response: bad request
+                // else if(parserRetVal == CODE_BAD)
+                        //TODO send response: bad request
+
+                return -1;
+        }
+
+        // sendResponse()
+                //constructResponse();
+                // writeResponse();
+        return 0;
+}
+
+/******************************************************************************/
+/******************************************************************************/
+/******************************************************************************/
+
+//TODO possibly need to rebuild this method entirely
+char* constructResponse(int type) {
+
+        char type_string[128];
+        char location[128] = "";
+        switch (type) {
+
+        case CODE_OK:
+                strcat(type_string, RESPONSE_OK);
+                break;
+
+        case CODE_FOUND:
+                strcat(type_string, RESPONSE_FOUND);
+                sprintf(location, "Location: %s\r\n", sPath);
+                break;
+
+        case CODE_BAD:
+                strcat(type_string, RESPONSE_BAD_REQUEST);
+                break;
+
+        case CODE_FORBIDDEN:
+                strcat(type_string, RESPONSE_FORBIDDEN);
+                break;
+
+        case CODE_NOT_FOUND:
+                strcat(type_string, RESPONSE_NOT_FOUND);
+                break;
+
+        case CODE_INTERNAL_ERROR:
+                strcat(type_string, RESPONSE_INTERNAL_ERROR);
+                break;
+
+        case CODE_NOT_SUPPORTED:
+                strcat(type_string, RESPONSE_NOT_SUPPORTED);
+                break;
+
+        }
+
+        char response_type[128];
+        sprintf(response_type, "HTTP/1.0 %s\r\n", type_string);
+
+        char server_header[64] = "Server: webserver/1.0\r\n";
+
+        //Get Date
+        char date_string[256];
+        char timebuf[128];
+        time_t now;
+        now = time(NULL);
+        strftime(timebuf, sizeof(timebuf), RFC1123FMT, gmtime(&now));
+        //date_string holds the correct format of the current time.
+        sprintf(date_string, "Date: %s\r\n", timebuf);
+
+
+        char content_type[128];
+        sprintf(content_type, "Content-Type: %s\r\n", get_mime_type("filename.ext")); //TODO replace with filename
+
+        char content_length[128];
+        sprintf(content_length, "Content-Length: %d\r\n", (int)strlen("response body")); //TODO replace with response body variable
+
+        char last_modified[128];
+        sprintf(last_modified, "Last Modified: %s\r\n", "last modification date"); //TODO replace with modification date
+
+        char connection[64] = "Connection: close\r\n\r\n";
+}
+
+/******************************************************************************/
+/******************************************************************************/
+/******************************************************************************/
+
+int parseRequest(char** request) {
+
+        char method[4];
+        char protocol[64];
+
+        int assigned = sscanf((*request), "%4s %s %8s", method, sPath, protocol);
+        debug_print("assigned = %d\n", assigned);
+        if(assigned != NUM_OF_EXPECTED_TOKENS)
+                return CODE_BAD;
+
+        if(strcmp(method, "GET"))
+                return CODE_NOT_SUPPORTED;
+
         return 0;
 }
 
@@ -240,6 +302,7 @@ int readRequest(char** request, int request_length, int* sockfd) {
                 }
 
                 bytes_read += nBytes;
+                // debug_print("buffer = %s\n", buffer);
 
                 if(nBytes >= (request_length - bytes_read)) {
 
@@ -252,14 +315,17 @@ int readRequest(char** request, int request_length, int* sockfd) {
                         (*request) = temp;
                 }
                 strncat((*request), buffer, nBytes);
+
+                //Server implementation reads only first line of the request.
+                if(strchr(buffer, '\r'))
+                        return 0;
         }
-        //TODO check if total bytes read are needed
         return 0;
 }
 
-/*********************************/
-/*********************************/
-/*********************************/
+/******************************************************************************/
+/******************************************************************************/
+/******************************************************************************/
 
 void initServerSocket(int* sockfd) {
 
