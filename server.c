@@ -4,13 +4,14 @@
 #include <unistd.h>
 #include <netdb.h>
 #include <sys/stat.h>
+#include <dirent.h>
 #include "threadpool.h"
 
 #define DEBUG 1
 #define debug_print(fmt, ...) \
            do { if (DEBUG) fprintf(stderr, fmt, __VA_ARGS__); } while (0)
 
-
+//TODO modulate code
 /***********************************/
 /***** Input Validation Macros *****/
 /***********************************/
@@ -28,6 +29,7 @@
 #define SIZE_REQUEST 64
 #define NUM_OF_EXPECTED_TOKENS 3
 #define SIZE_RESPONSE_BODY 1024
+#define DEFAULT_FILE "index.html"
 
 /**************************/
 /***** Response Codes *****/
@@ -58,6 +60,8 @@ static int sPort = 0;
 static int sPoolSize = 0;
 static int sMaxRequests = 0;
 static char* sPath = NULL;
+static int sIsPathDir = 0;
+static int sFoundFile = 0;
 
 
 /*******************************/
@@ -74,7 +78,8 @@ int parseRequest(char**);
 char *get_mime_type(char*);
 char* constructResponse(int);
 char* getResponseBody(int);
-int checkPath();
+int parsePath();
+int hasPermissions(struct stat*);
 
 /******************************************************************************/
 /******************************************************************************/
@@ -182,14 +187,14 @@ int handler(void* arg) {
         char* request = (char*)calloc(SIZE_REQUEST, sizeof(char));
 
         if(readRequest(&request, SIZE_REQUEST, sockfd)) {
-                //TODO send response: bad request
+                //TODO send response: internal error
                 return -1;
         }
         debug_print("Request = \n%s\n", request);
 
         sPath = (char*)calloc(strlen(request), sizeof(char));
         if(!sPath) {
-                //TODO send response: bad request
+                //TODO send response: internal error
                 return -1;
         }
 
@@ -204,7 +209,22 @@ int handler(void* arg) {
                 return -1;
         }
 
-        checkPath(); //TODO check return value
+        parserRetVal = parsePath(); //TODO check return value
+        if(parserRetVal) {
+
+                // if(parserRetVal == CODE_INTERNAL_ERROR)
+                        //TODO send response: internal error
+                // else if(parserRetVal == CODE_NOT_FOUND)
+                        //TODO send response: not found
+                // else if(parserRetVal == CODE_FOUND)
+                        //TODO send response: found
+                //else if (parserRetVal == CODE_FORBIDDEN)
+                        //TODO send response: forbidden
+
+                return -1;
+        }
+
+        //TODO create method to parse error and send appropriate request.
 
         // sendResponse()
                 //constructResponse();
@@ -214,12 +234,104 @@ int handler(void* arg) {
         return 0;
 }
 
-int checkPath() {
+int parsePath() {
+
+        //make sPath hold absolute path
+        char* rootPath = getcwd(NULL, 0);
+        debug_print("rootPath = %s\nsPath = %s\n", rootPath, sPath);
+
+        char* tempPath = (char*)calloc(strlen(rootPath) + strlen(sPath) + 1, sizeof(char));
+        if(!tempPath)
+                return CODE_INTERNAL_ERROR;
+
+        strcat(tempPath, rootPath);
+        strcat(tempPath, sPath);
+        debug_print("tempPath = %s\n", tempPath);
+        free(sPath); //free previously allocated path
+        free(rootPath); //free memory allocated by getcwd
+        sPath = tempPath;
+        debug_print("sPath = %s\n", sPath);
+
+        //Check path exists
+        struct stat pathStats;
+        if(stat(sPath, &pathStats)) {
+                debug_print("%s\n", "stat return -1");
+                return CODE_NOT_FOUND;
+        }
+
+        //Check if path is file or directory
+        if(S_ISDIR(pathStats.st_mode)) {
+
+                sIsPathDir = 1;
+                debug_print("%s\n", "path is dir");
+
+        } else {
+                sIsPathDir = 0;
+        }
 
 
+        if(sIsPathDir) {
+
+                if(sPath[strlen(sPath) - 1] != '/')
+                        return CODE_FOUND;
+
+
+                struct dirent** fileList;
+                int numOfFiles = scandir(sPath, &fileList, NULL, alphasort); //TODO free FileList
+                perror("scandir error"); //TODO DEBUG
+                if(numOfFiles < 0)
+                        return CODE_INTERNAL_ERROR;
+
+                int i;
+                debug_print("Printing scandir retval, numOfFiles = %d\n", numOfFiles);
+                for(i = 0; i < numOfFiles; i++) {
+                        debug_print("%s\n", fileList[i] -> d_name);
+                        if(strcmp(fileList[i]->d_name, DEFAULT_FILE)) {
+
+                                sFoundFile = 1;
+                                break;
+                        }
+                }
+
+                // if(sFoundFile) {
+                //
+                //         //TODO send index.html
+                //
+                // } else {
+                //
+                //         //TODO send dir_contents
+                // }
+
+                //TODO might not need above condition
+                //return 0 & use IsDir & FoundFile to determine action
+
+                // return 0;
+
+        } else { //path is file
+
+                if(!S_ISREG(pathStats.st_mode) || !hasPermissions(&pathStats)) {
+
+                        return CODE_FORBIDDEN;
+                }
+
+                // return 0;
+        }
 
         return 0;
 }
+
+/*********************************/
+/*********************************/
+/*********************************/
+
+//returns if file has read permissions for everyone (owner, grp, others)
+int hasPermissions(struct stat* fileStats) {
+
+        return (fileStats->st_mode & S_IRUSR)
+                && (fileStats->st_mode & S_IRGRP)
+                && (fileStats->st_mode & S_IROTH);
+}
+
 
 /******************************************************************************/
 /******************************************************************************/
@@ -405,7 +517,7 @@ int readRequest(char** request, int request_length, int* sockfd) {
         while((nBytes = read((*sockfd), buffer, sizeof(buffer))) > 0) {
 
                 if(nBytes < 0) {
-                        //TODO send response: bad request
+                        //TODO send response: internal error
                         debug_print("%s\n", "nbytes < 0");
                         return -1;
                 }
@@ -417,7 +529,7 @@ int readRequest(char** request, int request_length, int* sockfd) {
 
                         temp = (char*)realloc((*request), (request_length *= 2));
                         if(temp == NULL) {
-                                //TODO send response: bad request
+                                //TODO send response: internal error
                                 debug_print("%s\n", "temp is null");
                                 return -1;
                         }
