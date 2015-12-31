@@ -3,6 +3,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <netdb.h>
+#include <sys/stat.h>
 #include "threadpool.h"
 
 #define DEBUG 1
@@ -10,18 +11,27 @@
            do { if (DEBUG) fprintf(stderr, fmt, __VA_ARGS__); } while (0)
 
 
-#define RFC1123FMT "%a, %d %b %Y %H:%M:%S GMT"
-#define MAX_REQUEST_LENGHT 4000
+/***********************************/
+/***** Input Validation Macros *****/
+/***********************************/
+#define MAX_REQUEST_LENGTH 4000
 #define MAX_ENTITY_LINE 500
 #define MAX_PORT 65535
 #define NUM_OF_COMMANDS 4
 #define PRINT_WRONG_CMD_USAGE "Usage: server <port> <pool-size> <max-number-of-request>\n"
 
-#define BUFFER_SIZE 2
-#define REQUEST_SIZE 64
+/****************************************/
+/***** Response Construction Macros *****/
+/****************************************/
+#define RFC1123FMT "%a, %d %b %Y %H:%M:%S GMT"
+#define SIZE_BUFFER 2
+#define SIZE_REQUEST 64
 #define NUM_OF_EXPECTED_TOKENS 3
+#define SIZE_RESPONSE_BODY 1024
 
+/**************************/
 /***** Response Codes *****/
+/**************************/
 #define CODE_OK 200
 #define CODE_FOUND 302
 #define CODE_BAD 400
@@ -30,7 +40,9 @@
 #define CODE_INTERNAL_ERROR 500
 #define CODE_NOT_SUPPORTED 501
 
+/****************************/
 /***** Response Strings *****/
+/****************************/
 #define RESPONSE_OK "200 OK\r\n"
 #define RESPONSE_FOUND "302 Found\r\n"
 #define RESPONSE_BAD_REQUEST "400 Bad Request\r\n"
@@ -39,11 +51,18 @@
 #define RESPONSE_INTERNAL_ERROR "500 Internal Server Error\r\n"
 #define RESPONSE_NOT_SUPPORTED "501 Not Supported\r\n"
 
+/****************************/
+/***** Static Variables *****/
+/****************************/
 static int sPort = 0;
 static int sPoolSize = 0;
 static int sMaxRequests = 0;
 static char* sPath = NULL;
 
+
+/*******************************/
+/***** Method Declarations *****/
+/*******************************/
 int parseArguments(int, char**);
 int verifyPort(char*);
 int initServer();
@@ -53,6 +72,9 @@ int handler(void*);
 int readRequest(char**, int, int*);
 int parseRequest(char**);
 char *get_mime_type(char*);
+char* constructResponse(int);
+char* getResponseBody(int);
+int checkPath();
 
 /******************************************************************************/
 /******************************************************************************/
@@ -145,7 +167,7 @@ int initServer() {
         }
 
         //TODO free memory
-        close(new_sockfd);
+        close(new_sockfd); //TODO should this be in the loop?
         return 0;
 }
 
@@ -157,9 +179,9 @@ int handler(void* arg) {
 
         int* sockfd = (int*)(arg);
 
-        char* request = (char*)calloc(REQUEST_SIZE, sizeof(char));
+        char* request = (char*)calloc(SIZE_REQUEST, sizeof(char));
 
-        if(readRequest(&request, REQUEST_SIZE, sockfd)) {
+        if(readRequest(&request, SIZE_REQUEST, sockfd)) {
                 //TODO send response: bad request
                 return -1;
         }
@@ -175,16 +197,27 @@ int handler(void* arg) {
         if(parserRetVal) {
 
                 // if(parserRetVal == CODE_NOT_SUPPORTED)
-                        //TODO send response: bad request
+                        //TODO send response: not supported
                 // else if(parserRetVal == CODE_BAD)
                         //TODO send response: bad request
 
                 return -1;
         }
 
+        checkPath(); //TODO check return value
+
         // sendResponse()
                 //constructResponse();
                 // writeResponse();
+
+        //closeConnection()
+        return 0;
+}
+
+int checkPath() {
+
+
+
         return 0;
 }
 
@@ -195,8 +228,8 @@ int handler(void* arg) {
 //TODO possibly need to rebuild this method entirely
 char* constructResponse(int type) {
 
-        char type_string[128];
-        char location[128] = "";
+        char type_string[128] = "";
+        char location[128 + strlen(sPath)];
         switch (type) {
 
         case CODE_OK:
@@ -255,7 +288,83 @@ char* constructResponse(int type) {
         sprintf(last_modified, "Last Modified: %s\r\n", "last modification date"); //TODO replace with modification date
 
         char connection[64] = "Connection: close\r\n\r\n";
+
+
+        return NULL; //TODO Placeholder
 }
+
+
+/*********************************/
+/*********************************/
+/*********************************/
+
+char* getResponseBody(int type) {
+
+        char* responeBody = (char*)calloc(SIZE_RESPONSE_BODY, sizeof(char));
+        if(!responeBody)
+                return NULL;
+
+        char title[128] = "";
+        char body[128] = "";
+
+        switch (type) {
+
+                case CODE_OK:
+                        //TODO depends on dir or file
+                        strcat(title, "OK placeholder");
+                        strcat(body, "OK placeholder");
+                        break;
+
+                case CODE_FOUND:
+                        strcat(title, RESPONSE_FOUND);
+                        strcat(body, "Directories must end with a slash.");
+                        break;
+
+                case CODE_BAD:
+                        strcat(title, RESPONSE_BAD_REQUEST);
+                        strcat(body, "Bad Request.");
+                        break;
+
+                case CODE_FORBIDDEN:
+                        strcat(title, RESPONSE_FORBIDDEN);
+                        strcat(body, "Access denied.");
+                        break;
+
+                case CODE_NOT_FOUND:
+                        strcat(title, RESPONSE_NOT_FOUND);
+                        strcat(body, "File not found.");
+                        break;
+
+                case CODE_INTERNAL_ERROR:
+                        strcat(title, RESPONSE_INTERNAL_ERROR);
+                        strcat(body, "Some server side error.");
+                        break;
+
+                case CODE_NOT_SUPPORTED:
+                        strcat(title, RESPONSE_NOT_SUPPORTED);
+                        strcat(body, "Method is not supported.");
+                        break;
+        }
+
+
+        char* temp;
+        int length = 2*strlen(title) + strlen(body) + 64; //64 is approx size of all the html tags
+        if(SIZE_RESPONSE_BODY < length) {
+                temp = (char*)realloc(responeBody, length);
+                if(!temp)
+                        return NULL;
+                responeBody = temp;
+        }
+
+
+        sprintf(responeBody,
+                "<HTML><HEAD><TITLE>%s</TITLE></HEAD>\n<BODY><H4>%s</H4>%s</BODY></HTML>",
+                title, title, body);
+
+        //TODO check is response returns correctly
+        return responeBody;
+}
+
 
 /******************************************************************************/
 /******************************************************************************/
@@ -287,7 +396,7 @@ int readRequest(char** request, int request_length, int* sockfd) {
                 return -1;
 
         int nBytes;
-        char buffer[BUFFER_SIZE];
+        char buffer[SIZE_BUFFER];
         memset(&buffer, 0, sizeof(buffer));
         int bytes_read = 0;
 
