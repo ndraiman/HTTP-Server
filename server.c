@@ -11,7 +11,7 @@
 #define debug_print(fmt, ...) \
            do { if (DEBUG) fprintf(stderr, fmt, __VA_ARGS__); } while (0)
 
-//TODO modulate code
+
 /***********************************/
 /***** Input Validation Macros *****/
 /***********************************/
@@ -28,6 +28,7 @@
 #define NUM_OF_EXPECTED_TOKENS 3
 #define SIZE_BUFFER 2
 #define SIZE_REQUEST 64
+#define SIZE_RESPONSE 2048
 #define SIZE_RESPONSE_BODY 1024
 #define SIZE_DIR_ENTITY 500
 #define COLS_DIR_CONTENTS 3
@@ -47,13 +48,13 @@
 /****************************/
 /***** Response Strings *****/
 /****************************/
-#define RESPONSE_OK "200 OK\r\n"
-#define RESPONSE_FOUND "302 Found\r\n"
-#define RESPONSE_BAD_REQUEST "400 Bad Request\r\n"
-#define RESPONSE_FORBIDDEN "403 Forbidden\r\n"
-#define RESPONSE_NOT_FOUND "404 Not Found\r\n"
-#define RESPONSE_INTERNAL_ERROR "500 Internal Server Error\r\n"
-#define RESPONSE_NOT_SUPPORTED "501 Not Supported\r\n"
+#define RESPONSE_OK "200 OK"
+#define RESPONSE_FOUND "302 Found"
+#define RESPONSE_BAD_REQUEST "400 Bad Request"
+#define RESPONSE_FORBIDDEN "403 Forbidden"
+#define RESPONSE_NOT_FOUND "404 Not Found"
+#define RESPONSE_INTERNAL_ERROR "500 Internal Server Error"
+#define RESPONSE_NOT_SUPPORTED "501 Not Supported"
 
 /****************************/
 /***** Static Variables *****/
@@ -71,21 +72,26 @@ static struct dirent** sFileList = NULL; //TODO free FileList
 /*******************************/
 /***** Method Declarations *****/
 /*******************************/
+//Server Initialization
 int parseArguments(int, char**);
 int verifyPort(char*);
 int initServer();
 void initServerSocket(int*);
 
+//Request Handling
 int handler(void*);
 int readRequest(char**, int, int*);
 int parseRequest(char**);
-char *get_mime_type(char*);
-char* constructResponse(int);
-char* getResponseBody(int);
+char* get_mime_type(char*);
+int constructResponse(int, char**);
+int getResponseBody(int, char**);
 int parsePath();
 int hasPermissions(struct stat*);
+int sendResponse(int);
 
 /******************************************************************************/
+/******************************************************************************/
+/***************************** Main Method ************************************/
 /******************************************************************************/
 /******************************************************************************/
 
@@ -106,6 +112,8 @@ int main(int argc, char* argv[]) {
 }
 
 /******************************************************************************/
+/******************************************************************************/
+/************************ Initialize Server Methods ***************************/
 /******************************************************************************/
 /******************************************************************************/
 
@@ -148,12 +156,12 @@ int verifyPort(char* port_string) {
         return 0;
 }
 
-/******************************************************************************/
-/******************************************************************************/
-/******************************************************************************/
+/*********************************/
+/*********************************/
+/*********************************/
 
 int initServer() {
-
+        debug_print("%s\n", "initServer");
         int server_socket = 0;
         initServerSocket(&server_socket);
 
@@ -180,75 +188,161 @@ int initServer() {
         return 0;
 }
 
+/*********************************/
+/*********************************/
+/*********************************/
+
+void initServerSocket(int* sockfd) {
+        debug_print("%s\n", "initServerSocket");
+        if(((*sockfd) = socket(PF_INET, SOCK_STREAM, 0)) < 0) {
+                perror("socket");
+                exit(-1);
+        }
+
+        struct sockaddr_in srv;
+        srv.sin_family = AF_INET;
+        srv.sin_port = htons(sPort);
+        srv.sin_addr.s_addr = htonl(INADDR_ANY);
+
+        if(bind((*sockfd), (struct sockaddr*) &srv, sizeof(srv)) < 0) {
+                perror("bind");
+                exit(1);
+        }
+
+        //TODO change int backlog
+        if(listen((*sockfd), 5) < 0) {
+                perror("listen");
+                exit(1);
+        }
+
+
+}
+
 /******************************************************************************/
+/******************************************************************************/
+/*********************** Handler Method - Thread ******************************/
 /******************************************************************************/
 /******************************************************************************/
 
 int handler(void* arg) {
-
+        debug_print("handler - tid = %d\n", (int)pthread_self());
         int* sockfd = (int*)(arg);
 
         char* request = (char*)calloc(SIZE_REQUEST, sizeof(char));
 
         if(readRequest(&request, SIZE_REQUEST, sockfd)) {
-                //TODO send response: internal error
+                sendResponse(CODE_INTERNAL_ERROR);
                 return -1;
         }
         debug_print("Request = \n%s\n", request);
 
         sPath = (char*)calloc(strlen(request), sizeof(char));
         if(!sPath) {
-                //TODO send response: internal error
+                sendResponse(CODE_INTERNAL_ERROR);
                 return -1;
         }
 
-        int parserRetVal = parseRequest(&request);
-        if(parserRetVal) {
-
-                // if(parserRetVal == CODE_INTERNAL_ERROR)
-                        //TODO send response: internal error
-                // else if(parserRetVal == CODE_NOT_SUPPORTED)
-                        //TODO send response: not supported
-                // else if(parserRetVal == CODE_BAD)
-                        //TODO send response: bad request
-
+        int parserRetVal;
+        if((parserRetVal = parseRequest(&request)) || (parserRetVal = parsePath())) {
+                sendResponse(parserRetVal);
                 return -1;
         }
 
-        parserRetVal = parsePath(); //TODO check return value
-        if(parserRetVal) {
-
-                // if(parserRetVal == CODE_INTERNAL_ERROR)
-                        //TODO send response: internal error
-                // else if(parserRetVal == CODE_NOT_FOUND)
-                        //TODO send response: not found
-                // else if(parserRetVal == CODE_FOUND)
-                        //TODO send response: found
-                //else if (parserRetVal == CODE_FORBIDDEN)
-                        //TODO send response: forbidden
-
-                return -1;
-        }
-
-        //TODO create method to parse error and send appropriate request.
-
-        // sendResponse()
-                //constructResponse();
-                // writeResponse();
+        sendResponse(CODE_OK);
 
         //closeConnection()
         return 0;
 }
 
+/******************************************************************************/
+/******************************************************************************/
+/*************************** Request Methods **********************************/
+/******************************************************************************/
+/******************************************************************************/
+
+//returns 0 on success, -1 on failure
+int readRequest(char** request, int request_length, int* sockfd) {
+        debug_print("%s\n", "readRequest");
+        if((*request) == NULL)
+                return -1;
+
+        int nBytes;
+        char buffer[SIZE_BUFFER];
+        memset(&buffer, 0, sizeof(buffer));
+        int bytes_read = 0;
+
+        char* temp;
+
+        while((nBytes = read((*sockfd), buffer, sizeof(buffer))) > 0) {
+
+                if(nBytes < 0)
+                        return -1;
+
+                bytes_read += nBytes;
+
+                if(nBytes >= (request_length - bytes_read)) {
+
+                        temp = (char*)realloc((*request), (request_length *= 2));
+                        if(temp == NULL)
+                                return -1;
+
+                        (*request) = temp;
+                }
+                strncat((*request), buffer, nBytes);
+
+                //Server implementation reads only first line of the request.
+                if(strchr(buffer, '\r'))
+                        return 0;
+        }
+        return 0;
+}
+
+/*********************************/
+/*********************************/
+/*********************************/
+
+//returns 0 on success, error number on failure
+int parseRequest(char** request) {
+        debug_print("%s\n", "parseRequest");
+        char method[4];
+        char protocol[64];
+
+        int assigned = sscanf((*request), "%4s %s %8s", method, sPath, protocol);
+        debug_print("\tassigned = %d\n", assigned);
+        if(assigned != NUM_OF_EXPECTED_TOKENS)
+                return CODE_BAD;
+
+        if(strcmp(method, "GET"))
+                return CODE_NOT_SUPPORTED;
+
+        //extract path from HTTP/1.0 requests
+        if(!strncmp(sPath, "http", 4)) {
+
+                debug_print("\t%s\n", "path containts http");
+                char* temp = (char*)calloc(strlen(sPath), sizeof(char));
+                if(!temp)
+                        return CODE_INTERNAL_ERROR;
+                strcat(temp, strchr(&sPath[7], '/'));
+                free(sPath);
+                sPath = temp;
+                debug_print("\tcorrected sPath = %s\n", temp);
+        }
+        return 0;
+}
+
+/*********************************/
+/*********************************/
+/*********************************/
+
 //returns 0 on success, error number on failure
 int parsePath() {
-
+        debug_print("%s\n", "parsePath");
         int i;
         sFoundFile = 0;
 
         //make sPath hold absolute path
         char* rootPath = getcwd(NULL, 0);
-        debug_print("rootPath = %s\nsPath = %s\n", rootPath, sPath);
+        debug_print("\trootPath = %s\n\tsPath = %s\n", rootPath, sPath);
 
         char* tempPath = (char*)calloc(strlen(rootPath) + strlen(sPath) + 1, sizeof(char));
         if(!tempPath)
@@ -256,16 +350,16 @@ int parsePath() {
 
         strcat(tempPath, rootPath);
         strcat(tempPath, sPath);
-        debug_print("tempPath = %s\n", tempPath);
+        debug_print("\ttempPath = %s\n", tempPath);
         free(sPath); //free previously allocated path
         free(rootPath); //free memory allocated by getcwd
         sPath = tempPath;
-        debug_print("sPath = %s\n", sPath);
+        debug_print("\tsPath = %s\n", sPath);
 
         //Check path exists
         struct stat pathStats;
         if(stat(sPath, &pathStats)) {
-                debug_print("%s\n", "stat return -1");
+                debug_print("\t%s\n", "stat return -1");
                 return CODE_NOT_FOUND;
         }
 
@@ -273,7 +367,7 @@ int parsePath() {
         if(S_ISDIR(pathStats.st_mode)) {
 
                 sIsPathDir = 1;
-                debug_print("%s\n", "path is dir");
+                debug_print("\t%s\n", "path is dir");
 
         } else {
                 sIsPathDir = 0;
@@ -291,9 +385,9 @@ int parsePath() {
                 if(numOfFiles < 0)
                         return CODE_INTERNAL_ERROR;
 
-                debug_print("Printing scandir retval, numOfFiles = %d\n", numOfFiles);
+                debug_print("\tPrinting scandir retval, numOfFiles = %d\n", numOfFiles);
                 for(i = 0; i < numOfFiles; i++) {
-                        debug_print("%s [%d]\n", sFileList[i] -> d_name, i);
+                        debug_print("\t%s [%d]\n", sFileList[i] -> d_name, i);
                         if(!strcmp(sFileList[i]->d_name, DEFAULT_FILE)) {
 
                                 sFoundFile = 1;
@@ -301,7 +395,7 @@ int parsePath() {
                         }
                 }
 
-                debug_print("sFoundFile = %d\n", sFoundFile);
+                debug_print("\tsFoundFile = %d\n", sFoundFile);
 
                 // if(!sFoundFile) {
                 //
@@ -396,6 +490,7 @@ int parsePath() {
                 // return 0;
         }
 
+        debug_print("%s\n", "parsePath END");
         return 0;
 }
 
@@ -413,16 +508,42 @@ int hasPermissions(struct stat* fileStats) {
 
 /******************************************************************************/
 /******************************************************************************/
+/***************************** Response Methods *******************************/
+/******************************************************************************/
 /******************************************************************************/
 
-//TODO possibly need to rebuild this method entirely
-char* constructResponse(int type) {
+//returns 0 on success, -1 on failure
+int sendResponse(int type) {
 
+        //TODO if sending the response fails?
+
+        char* response = (char*)calloc(SIZE_RESPONSE, sizeof(char));
+        if(!response)
+                return -1;
+
+        if(constructResponse(type, &response))
+                return -1;
+
+
+        //writeResponse()
+
+        return 0;
+}
+
+/*********************************/
+/*********************************/
+/*********************************/
+
+//returns 0 on success, -1 on failure
+int constructResponse(int type, char** response) {
+        debug_print("%s\n", "constructResponse");
         char server_header[64] = "Server: webserver/1.0\r\n";
         char connection[64] = "Connection: close\r\n\r\n";
 
         char type_string[32] = "";
-        char location[64 + strlen(sPath)];
+        char* location = (char*)calloc(64, sizeof(char));
+        if(!location)
+                return -1;
 
         switch (type) {
 
@@ -432,6 +553,12 @@ char* constructResponse(int type) {
 
         case CODE_FOUND:
                 strcat(type_string, RESPONSE_FOUND);
+                if(strlen(sPath) <= 64) {
+                        char* temp = (char*)realloc(location, strlen(sPath) + 16);
+                        if(!temp)
+                                return -1;
+                        location = temp;
+                }
                 sprintf(location, "Location: %s\r\n", sPath);
                 break;
 
@@ -461,7 +588,6 @@ char* constructResponse(int type) {
         sprintf(response_type, "HTTP/1.0 %s\r\n", type_string);
 
 
-
         //Get Date
         char date_string[256];
         char timebuf[128];
@@ -478,28 +604,59 @@ char* constructResponse(int type) {
                 sIsPathDir ? get_mime_type(DEFAULT_FILE) : get_mime_type(strrchr(sPath, '/')));
 
 
-
+        char* responseBody = (char*)calloc(SIZE_RESPONSE_BODY, sizeof(char));
+        if(!responseBody || getResponseBody(type, &responseBody))
+                return -1;
 
         char content_length[128];
-        sprintf(content_length, "Content-Length: %d\r\n", (int)strlen("response body")); //TODO replace with response body variable
+        sprintf(content_length, "Content-Length: %d\r\n", (int)strlen(responseBody));
 
-        char last_modified[128];
+        //TODO if type is OK
+        char last_modified[128] = "";
         sprintf(last_modified, "Last Modified: %s\r\n", "last modification date"); //TODO replace with modification date
 
 
-        return NULL; //TODO Placeholder
+        int length = strlen(response_type)
+                + strlen(server_header)
+                + strlen(date_string)
+                + strlen(location)
+                + strlen(content_type)
+                + strlen(content_length)
+                + strlen(last_modified)
+                + strlen(connection)
+                + strlen(responseBody);
+
+        if(strlen(*response) <= length) {
+                char* temp = (char*)realloc((*response), length + 1);
+                if(!temp)
+                        return -1;
+                (*response) = temp;
+        }
+        sprintf(*response, "%s%s%s%s%s%s%s%s%s",
+                response_type,
+                server_header,
+                date_string,
+                location,
+                content_type,
+                content_length,
+                last_modified,
+                connection,
+                responseBody);
+
+        free(location);
+        free(responseBody);
+        debug_print("response = \n\n%s\n", *response);
+        return 0;
 }
 
 
 /*********************************/
 /*********************************/
 /*********************************/
+//return 0 on success, -1 on failure
+int getResponseBody(int type, char** responseBody) {
+        debug_print("\t%s\n", "getResponseBody");
 
-char* getResponseBody(int type) {
-
-        char* responeBody = (char*)calloc(SIZE_RESPONSE_BODY, sizeof(char));
-        if(!responeBody)
-                return NULL;
 
         char title[128] = "";
         char body[128] = "";
@@ -547,51 +704,19 @@ char* getResponseBody(int type) {
         char* temp;
         int length = 2*strlen(title) + strlen(body) + 64; //64 is approx size of all the html tags
         if(SIZE_RESPONSE_BODY < length) {
-                temp = (char*)realloc(responeBody, length);
+                debug_print("\t\treallocing responseBody from %d to %d\n", (int)strlen(*responseBody), length);
+                temp = (char*)realloc(responseBody, length);
                 if(!temp)
-                        return NULL;
-                responeBody = temp;
+                        return -1;
+                (*responseBody) = temp;
         }
 
 
-        sprintf(responeBody,
-                "<HTML><HEAD><TITLE>%s</TITLE></HEAD>\n<BODY><H4>%s</H4>%s</BODY></HTML>",
+        sprintf((*responseBody),
+                "<HTML>\n<HEAD>\n<TITLE>%s</TITLE>\n</HEAD>\n<BODY>\n<H4>%s</H4>\n%s\n</BODY>\n</HTML>\n",
                 title, title, body);
 
         //TODO check is response returns correctly
-        return responeBody;
-}
-
-
-/******************************************************************************/
-/******************************************************************************/
-/******************************************************************************/
-//returns 0 on success, error number on failure
-int parseRequest(char** request) {
-
-        char method[4];
-        char protocol[64];
-
-        int assigned = sscanf((*request), "%4s %s %8s", method, sPath, protocol);
-        debug_print("assigned = %d\n", assigned);
-        if(assigned != NUM_OF_EXPECTED_TOKENS)
-                return CODE_BAD;
-
-        if(strcmp(method, "GET"))
-                return CODE_NOT_SUPPORTED;
-
-        //extract path from HTTP/1.0 requests
-        if(!strncmp(sPath, "http", 4)) {
-
-                debug_print("%s\n", "path containts http");
-                char* temp = (char*)calloc(strlen(sPath), sizeof(char));
-                if(!temp)
-                        return CODE_INTERNAL_ERROR;
-                strcat(temp, strchr(&sPath[7], '/'));
-                free(sPath);
-                sPath = temp;
-                debug_print("corrected sPath = %s\n", temp);
-        }
         return 0;
 }
 
@@ -599,80 +724,9 @@ int parseRequest(char** request) {
 /*********************************/
 /*********************************/
 
-//returns 0 on success, -1 on failure
-int readRequest(char** request, int request_length, int* sockfd) {
+char* get_mime_type(char* name) {
 
-        if((*request) == NULL)
-                return -1;
-
-        int nBytes;
-        char buffer[SIZE_BUFFER];
-        memset(&buffer, 0, sizeof(buffer));
-        int bytes_read = 0;
-
-        char* temp;
-
-        while((nBytes = read((*sockfd), buffer, sizeof(buffer))) > 0) {
-
-                if(nBytes < 0)
-                        return -1;
-
-                bytes_read += nBytes;
-
-                if(nBytes >= (request_length - bytes_read)) {
-
-                        temp = (char*)realloc((*request), (request_length *= 2));
-                        if(temp == NULL)
-                                return -1;
-
-                        (*request) = temp;
-                }
-                strncat((*request), buffer, nBytes);
-
-                //Server implementation reads only first line of the request.
-                if(strchr(buffer, '\r'))
-                        return 0;
-        }
-        return 0;
-}
-
-/******************************************************************************/
-/******************************************************************************/
-/******************************************************************************/
-
-void initServerSocket(int* sockfd) {
-
-        if(((*sockfd) = socket(PF_INET, SOCK_STREAM, 0)) < 0) {
-                perror("socket");
-                exit(-1);
-        }
-
-        struct sockaddr_in srv;
-        srv.sin_family = AF_INET;
-        srv.sin_port = htons(sPort);
-        srv.sin_addr.s_addr = htonl(INADDR_ANY);
-
-        if(bind((*sockfd), (struct sockaddr*) &srv, sizeof(srv)) < 0) {
-                perror("bind");
-                exit(1);
-        }
-
-        //TODO change int backlog
-        if(listen((*sockfd), 5) < 0) {
-                perror("listen");
-                exit(1);
-        }
-
-
-}
-
-/******************************************************************************/
-/******************************************************************************/
-/******************************************************************************/
-
-
-char *get_mime_type(char *name)
-{
+        debug_print("\t%s\n", "get_mime_type");
         char *ext = strrchr(name, '.');
         if (!ext)
                 return NULL;
@@ -700,7 +754,3 @@ char *get_mime_type(char *name)
 
         return NULL;
 }
-
-/******************************************************************************/
-/******************************************************************************/
-/******************************************************************************/
