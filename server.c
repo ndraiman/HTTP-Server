@@ -6,10 +6,9 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <dirent.h>
-// #include <stdarg.h>
 #include "threadpool.h"
 
-#define DEBUG 1
+#define DEBUG 1 //TODO disable debug prints
 #define debug_print(fmt, ...) \
         do { if (DEBUG) fprintf(stderr, fmt, __VA_ARGS__); } while (0)
 
