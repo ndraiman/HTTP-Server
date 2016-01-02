@@ -82,12 +82,15 @@ void initServerSocket(int*);
 int handler(void*);
 int readRequest(char**, int, int*);
 int parseRequest(char**);
-char* get_mime_type(char*);
-int constructResponse(int, char**);
-int getResponseBody(int, char**);
 int parsePath();
 int hasPermissions(struct stat*);
-int sendResponse(int);
+
+//Response Handling
+int sendResponse(int*, int);
+int constructResponse(int, char**);
+int getResponseBody(int, char**);
+char* get_mime_type(char*);
+int writeResponse(int*, char**);
 
 /******************************************************************************/
 /******************************************************************************/
@@ -184,7 +187,8 @@ int initServer() {
         }
 
         //TODO free memory
-        close(new_sockfd); //TODO should this be in the loop?
+        close(server_socket);
+        destroy_threadpool(pool);
         return 0;
 }
 
@@ -193,7 +197,7 @@ int initServer() {
 /*********************************/
 
 void initServerSocket(int* sockfd) {
-        debug_print("%s\n", "initServerSocket");
+        debug_print("\t%s\n", "initServerSocket");
         if(((*sockfd) = socket(PF_INET, SOCK_STREAM, 0)) < 0) {
                 perror("socket");
                 exit(-1);
@@ -231,26 +235,26 @@ int handler(void* arg) {
         char* request = (char*)calloc(SIZE_REQUEST, sizeof(char));
 
         if(readRequest(&request, SIZE_REQUEST, sockfd)) {
-                sendResponse(CODE_INTERNAL_ERROR);
+                sendResponse(sockfd, CODE_INTERNAL_ERROR);
                 return -1;
         }
         debug_print("Request = \n%s\n", request);
 
         sPath = (char*)calloc(strlen(request), sizeof(char));
         if(!sPath) {
-                sendResponse(CODE_INTERNAL_ERROR);
+                sendResponse(sockfd, CODE_INTERNAL_ERROR);
                 return -1;
         }
 
         int parserRetVal;
         if((parserRetVal = parseRequest(&request)) || (parserRetVal = parsePath())) {
-                sendResponse(parserRetVal);
+                sendResponse(sockfd, parserRetVal);
                 return -1;
         }
 
-        sendResponse(CODE_OK);
-
-        //closeConnection()
+        sendResponse(sockfd, CODE_OK);
+        //TODO what to do if sending response fails?
+        free(sFileList);
         return 0;
 }
 
@@ -513,20 +517,20 @@ int hasPermissions(struct stat* fileStats) {
 /******************************************************************************/
 
 //returns 0 on success, -1 on failure
-int sendResponse(int type) {
-
-        //TODO if sending the response fails?
+int sendResponse(int* sockfd, int type) {
+        debug_print("%s\n", "sendResponse");
+        //FIXME if sending the response fails?
 
         char* response = (char*)calloc(SIZE_RESPONSE, sizeof(char));
         if(!response)
                 return -1;
 
-        if(constructResponse(type, &response))
+        if(constructResponse(type, &response) || writeResponse(sockfd, &response))
                 return -1;
 
-
-        //writeResponse()
-
+        debug_print("%s\n", "sendResponse END");
+        free(response);
+        close(*sockfd);
         return 0;
 }
 
@@ -611,9 +615,9 @@ int constructResponse(int type, char** response) {
         char content_length[128];
         sprintf(content_length, "Content-Length: %d\r\n", (int)strlen(responseBody));
 
-        //TODO if type is OK
+        //FIXME if type is OK
         char last_modified[128] = "";
-        sprintf(last_modified, "Last Modified: %s\r\n", "last modification date"); //TODO replace with modification date
+        // sprintf(last_modified, "Last Modified: %s\r\n", "last modification date"); //FIXME replace with modification date
 
 
         int length = strlen(response_type)
@@ -716,7 +720,6 @@ int getResponseBody(int type, char** responseBody) {
                 "<HTML>\n<HEAD>\n<TITLE>%s</TITLE>\n</HEAD>\n<BODY>\n<H4>%s</H4>\n%s\n</BODY>\n</HTML>\n",
                 title, title, body);
 
-        //TODO check is response returns correctly
         return 0;
 }
 
@@ -753,4 +756,31 @@ char* get_mime_type(char* name) {
                 return "audio/mpeg";
 
         return NULL;
+}
+
+/*********************************/
+/*********************************/
+/*********************************/
+
+int writeResponse(int* sockfd, char** response) {
+        debug_print("%s\n", "writeResponse");
+        int response_length = strlen(*response);
+        int bytes_written = 0;
+        int nBytes;
+
+        debug_print("response length = %d\nresponse: \n%s\n", response_length, *response);
+
+
+        while(bytes_written < response_length) {
+
+                if((nBytes = write((*sockfd), *response, strlen(*response))) < 0) {
+                        //FIXME what response to send?
+                        debug_print("%s\n", "writing response failed");
+                        return -1;
+                }
+
+                bytes_written += nBytes;
+        }
+
+        return 0;
 }
