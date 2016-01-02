@@ -4,7 +4,7 @@ OBJECTS = threadpool.o server.o
 LDFLAGS = -lpthread
 
 DEBUG_FLAGS = -g
-DEBUG_OBJECTS = server.c
+DEBUG_OBJECTS = threadpool.c server.c
 
 app: $(OBJECTS)
 	$(CC) $(OBJECTS) -Wall $(LDFLAGS) -o server

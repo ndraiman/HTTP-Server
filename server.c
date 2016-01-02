@@ -66,6 +66,7 @@ static char* sPath = NULL;
 static int sIsPathDir = 0;
 static int sFoundFile = 0;
 static struct dirent** sFileList = NULL; //TODO free FileList
+static int sNumOfFiles = 0;
 
 
 
@@ -231,8 +232,9 @@ void initServerSocket(int* sockfd) {
 int handler(void* arg) {
         debug_print("handler - tid = %d\n", (int)pthread_self());
         int* sockfd = (int*)(arg);
-
         char* request = (char*)calloc(SIZE_REQUEST, sizeof(char));
+        if(!request || !sockfd)
+                return -1; //TODO what response to send?
 
         if(readRequest(&request, SIZE_REQUEST, sockfd)) {
                 sendResponse(sockfd, CODE_INTERNAL_ERROR);
@@ -254,6 +256,13 @@ int handler(void* arg) {
 
         sendResponse(sockfd, CODE_OK);
         //TODO what to do if sending response fails?
+
+        //Free Memory
+        free(request);
+        free(sPath);
+        int i;
+        for(i = 0; i < sNumOfFiles; i++)
+                free(sFileList[i]);
         free(sFileList);
         return 0;
 }
@@ -267,17 +276,15 @@ int handler(void* arg) {
 //returns 0 on success, -1 on failure
 int readRequest(char** request, int request_length, int* sockfd) {
         debug_print("%s\n", "readRequest");
-        if((*request) == NULL)
-                return -1;
 
         int nBytes;
-        char buffer[SIZE_BUFFER];
-        memset(&buffer, 0, sizeof(buffer));
+        char buffer[SIZE_BUFFER + 1];
+        memset(buffer, 0, sizeof(buffer));
         int bytes_read = 0;
 
         char* temp;
 
-        while((nBytes = read((*sockfd), buffer, sizeof(buffer))) > 0) {
+        while((nBytes = read((*sockfd), buffer, SIZE_BUFFER)) > 0) {
 
                 if(nBytes < 0)
                         return -1;
@@ -384,13 +391,13 @@ int parsePath() {
                         return CODE_FOUND;
 
 
-                int numOfFiles = scandir(sPath, &sFileList, NULL, alphasort);
+                sNumOfFiles = scandir(sPath, &sFileList, NULL, alphasort);
                 perror("scandir error"); //TODO DEBUG
-                if(numOfFiles < 0)
+                if(sNumOfFiles < 0)
                         return CODE_INTERNAL_ERROR;
 
-                debug_print("\tPrinting scandir retval, numOfFiles = %d\n", numOfFiles);
-                for(i = 0; i < numOfFiles; i++) {
+                debug_print("\tPrinting scandir retval, numOfFiles = %d\n", sNumOfFiles);
+                for(i = 0; i < sNumOfFiles; i++) {
                         debug_print("\t%s [%d]\n", sFileList[i] -> d_name, i);
                         if(!strcmp(sFileList[i]->d_name, DEFAULT_FILE)) {
 
@@ -662,13 +669,18 @@ int getResponseBody(int type, char** responseBody) {
         debug_print("\t%s\n", "getResponseBody");
 
 
-        char title[128] = "";
-        char body[128] = "";
+        // char title[128] = "";
+        // char body[128] = "";
+        char* title = (char*)calloc(128, sizeof(char));
+        char* body = (char*)calloc(128, sizeof(char));
+        if(!title || !body)
+                return -1;
 
         switch (type) {
 
                 case CODE_OK:
                         //TODO depends on dir or file
+                        // getPathBody(&body);
                         strcat(title, "OK placeholder");
                         strcat(body, "OK placeholder");
                         break;
@@ -720,6 +732,8 @@ int getResponseBody(int type, char** responseBody) {
                 "<HTML>\n<HEAD>\n<TITLE>%s</TITLE>\n</HEAD>\n<BODY>\n<H4>%s</H4>\n%s\n</BODY>\n</HTML>\n",
                 title, title, body);
 
+        free(title);
+        free(body);
         return 0;
 }
 
