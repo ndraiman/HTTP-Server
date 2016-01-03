@@ -33,7 +33,7 @@
 #define SIZE_RESPONSE_BODY 1024
 #define SIZE_HEADER 64
 #define SIZE_DATE_BUFFER 128
-#define SIZE_HTML_TAGS 64
+#define SIZE_HTML_TAGS 128
 #define SIZE_DIR_ENTITY 500
 #define COLS_DIR_CONTENTS 3
 #define DEFAULT_FILE "index.html"
@@ -111,17 +111,17 @@ int main(int argc, char* argv[]) {
 
         if(argc != NUM_OF_COMMANDS) {
                 printf(PRINT_WRONG_CMD_USAGE);
-                exit(-1);
+                exit(EXIT_FAILURE);
         }
 
         if(parseArguments(argc, argv)) {
                 printf(PRINT_WRONG_CMD_USAGE);
-                exit(-1);
+                exit(EXIT_FAILURE);
         }
 
         initServer(argc, argv);
 
-        return 0;
+        return EXIT_SUCCESS;
 }
 
 /******************************************************************************/
@@ -710,11 +710,10 @@ int getResponseBody(int type, char** responseBody) {
         }
 
 
-        char* temp;
         int length = 2*strlen(title) + strlen(body) + SIZE_HTML_TAGS;
         if(SIZE_RESPONSE_BODY < length) {
-                debug_print("\t\treallocing responseBody from %d to %d\n", (int)strlen(*responseBody), length);
-                temp = (char*)realloc(*responseBody, length + 1);
+                debug_print("\t\treallocing responseBody from %d to %d\n", SIZE_RESPONSE_BODY, length);
+                char* temp = (char*)realloc((*responseBody), (length + 1));
                 if(!temp) {
                         free(title);
                         free(body);
@@ -869,7 +868,7 @@ int writeResponse(int* sockfd, char** response) {
         int bytes_written = 0;
         int nBytes;
 
-        debug_print("response length = %d\nresponse: \n%s\n", response_length, *response);
+        // debug_print("response length = %d\nresponse: \n%s\n", response_length, *response); //FIXME
 
 
         while(bytes_written < response_length) {
