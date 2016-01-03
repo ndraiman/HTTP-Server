@@ -121,6 +121,7 @@ int main(int argc, char* argv[]) {
 
         initServer(argc, argv);
 
+        return 0;
 }
 
 /******************************************************************************/
@@ -238,6 +239,11 @@ void initServerSocket(int* sockfd) {
 
 int handler(void* arg) {
         debug_print("handler - tid = %d\n", (int)pthread_self());
+
+        sPath = NULL;
+        sLocationPath = NULL;
+        sFileList = NULL;
+
         int* sockfd = (int*)(arg);
         if(!sockfd)
                 return -1;
@@ -269,7 +275,8 @@ int handler(void* arg) {
         if((parserRetVal = parseRequest(&request)) || (parserRetVal = parsePath())) {
                 debug_print("something failed, parserRetVal = %d\n", parserRetVal);
                 sendResponse(sockfd, parserRetVal);
-                free(request);
+                if(request)
+                        free(request);
                 freeGlobalVars();
                 return -1;
         }
@@ -707,7 +714,7 @@ int getResponseBody(int type, char** responseBody) {
         int length = 2*strlen(title) + strlen(body) + SIZE_HTML_TAGS;
         if(SIZE_RESPONSE_BODY < length) {
                 debug_print("\t\treallocing responseBody from %d to %d\n", (int)strlen(*responseBody), length);
-                temp = (char*)realloc(responseBody, length + 1);
+                temp = (char*)realloc(*responseBody, length + 1);
                 if(!temp) {
                         free(title);
                         free(body);
@@ -884,7 +891,7 @@ int writeResponse(int* sockfd, char** response) {
 /******************************************************************************/
 
 void freeGlobalVars() {
-
+        debug_print("%s\n", "freeGlobalVars");
         if(sPath)
                 free(sPath);
 
@@ -892,11 +899,13 @@ void freeGlobalVars() {
                 free(sLocationPath);
 
         if(sFileList) {
+                debug_print("\t%s\n", "freeing sFileList");
                 int i;
                 for(i = 0; i < sNumOfFiles; i++)
                         free(sFileList[i]);
                 free(sFileList);
         }
+        debug_print("%s\n", "freeGlobalVars END");
 }
 
 /******************************************************************************/
