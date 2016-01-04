@@ -85,6 +85,7 @@ static int sIsPathDir = 0;
 static int sFoundFile = 0;
 static struct dirent** sFileList = NULL;
 static int sNumOfFiles = 0;
+static char* sAbsPath = NULL;
 
 
 
@@ -110,10 +111,11 @@ char* constructResponse(int, char*);
 char* getResponseBody(int);
 char* getDirContents(char*);
 char* get_mime_type(char*);
-int writeResponse(int*, char**);
+int writeResponse(int*, char*, char*);
+int writeFile(int*);
 
-void freeFileList();
-
+//Misc
+void freeGlobalVars();
 int replaceSubstring(char*, char*, char*);
 
 /******************************************************************************/
@@ -261,6 +263,7 @@ void initServerSocket(int* sockfd) {
 int handler(void* arg) {
         debug_print("handler - tid = %d\n", (int)pthread_self());
 
+        sAbsPath = NULL;
         sIsPathDir = 0;
         sFoundFile = 0;
         sFileList = NULL;
@@ -277,65 +280,28 @@ int handler(void* arg) {
 
         if(readRequest(request, &sockfd)) {
                 sendResponse(&sockfd, CODE_INTERNAL_ERROR, NULL);
+                freeGlobalVars();
                 close(sockfd);
                 free(arg);
                 return -1;
         }
-        debug_print("request = %s\n", request);
+        debug_print("handler - request = %s\n", request);
 
         int parser_code;
         if((parser_code = parseRequest(request, path)) || (parser_code =  parsePath(path))) {
                 sendResponse(&sockfd, parser_code, NULL);
+                freeGlobalVars();
                 close(sockfd);
                 free(arg);
                 return -1;
         }
-        debug_print("path = %s\n", path);
+        debug_print("handler - path = %s\n", path);
 
-        sendResponse(&sockfd, CODE_OK, path); //TODO rewrite
+        sendResponse(&sockfd, CODE_OK, path);
+        freeGlobalVars();
+        shutdown(sockfd, SHUT_RDWR); //FIXME
         close(sockfd);
         free(arg);
-        // char* request = (char*)calloc(SIZE_REQUEST, sizeof(char));
-        // if(!request) {
-        //         sendResponse(sockfd, CODE_INTERNAL_ERROR);
-        //         freeFileList();
-        //         return -1;
-        // }
-        //
-        // if(readRequest(&request, SIZE_REQUEST, sockfd, 1)) {
-        //         sendResponse(sockfd, CODE_INTERNAL_ERROR);
-        //         free(request);
-        //         freeFileList();
-        //         return -1;
-        // }
-        // debug_print("Request = \n%s\n", request);
-        //
-        // sPath = (char*)calloc(strlen(request), sizeof(char));
-        // if(!sPath) {
-        //         sendResponse(sockfd, CODE_INTERNAL_ERROR);
-        //         free(request);
-        //         freeFileList();
-        //         return -1;
-        // }
-        //
-        // int parserRetVal;
-        // if((parserRetVal = parseRequest(&request)) || (parserRetVal = parsePath())) {
-        //         debug_print("something failed, parserRetVal = %d\n", parserRetVal);
-        //         sendResponse(sockfd, parserRetVal);
-        //         if(request)
-        //                 free(request);
-        //         freeFileList();
-        //         return -1;
-        // }
-        //
-        // if(sendResponse(sockfd, CODE_OK)) {
-        //         fprintf(stderr, "sending response failed\n");
-        //         return -1;
-        // }
-        //
-        // //Free Memory
-        // free(request);
-        // freeFileList();
         return 0;
 }
 
@@ -379,7 +345,7 @@ int readRequest(char* request, int* sockfd) {
 
 //returns 0 on success, error number on failure
 int parseRequest(char* request, char* path) {
-        debug_print("%s\n", "parseRequest");
+        debug_print("%s\n", "parseRequest START");
         char method[4];
         char protocol[64];
 
@@ -406,11 +372,13 @@ int parseRequest(char* request, char* path) {
                 debug_print("\t%s\n", "path containts http");
                 char temp[strlen(path)];
                 memset(temp, 0, sizeof(temp));
-                strcat(temp, path + strlen("http://"));
-                debug_print("temp = %s\n", temp);
+                strcat(temp, strchr(&path[strlen("http://")], '/'));
+                debug_print("\ttemp = %s\n", temp);
                 memset(path, 0, strlen(path));
-                strncpy(path, temp, strlen(temp));
+                memcpy(path, temp, strlen(temp));
+                debug_print("\tpath = %s\n", path);
         }
+        debug_print("%s\n", "parseRequest END");
         return 0;
 }
 
@@ -420,7 +388,7 @@ int parseRequest(char* request, char* path) {
 
 //returns 0 on success, error number on failure
 int parsePath(char* path) {
-        debug_print("%s\n", "parsePath");
+        debug_print("parsePath START - path = %s\n", path);
         int i;
 
         replaceSubstring(path, "%20", " ");
@@ -431,17 +399,19 @@ int parsePath(char* path) {
         if(!rootPath)
                 return -1;
 
-        char absPath[strlen(path) + strlen(rootPath) + 1];
-        memset(absPath, 0, sizeof(absPath));
-        strcat(absPath, rootPath);
-        strcat(absPath, path);
+        int absPath_length = strlen(rootPath) + strlen(path) + strlen(DEFAULT_FILE) + 1;
+        sAbsPath = (char*)calloc(absPath_length, sizeof(char));
+        if(!sAbsPath)
+                return -1;
+        strcat(sAbsPath, rootPath);
+        strcat(sAbsPath, path);
 
         free(rootPath);
-        debug_print("absPath = %s\n", absPath);
+        debug_print("absPath = %s\n", sAbsPath);
 
         //Check path exists
         struct stat pathStats;
-        if(stat(absPath, &pathStats)) {
+        if(stat(sAbsPath, &pathStats)) {
                 debug_print("\t%s\n", "stat return -1");
                 return CODE_NOT_FOUND;
         }
@@ -457,11 +427,11 @@ int parsePath(char* path) {
 
         if(sIsPathDir) {
 
-                if(absPath[strlen(absPath) - 1] != '/')
+                if(sAbsPath[strlen(sAbsPath) - 1] != '/')
                         return CODE_FOUND;
 
 
-                sNumOfFiles = scandir(absPath, &sFileList, NULL, alphasort);
+                sNumOfFiles = scandir(sAbsPath, &sFileList, NULL, alphasort);
                 if(sNumOfFiles < 0)
                         return CODE_INTERNAL_ERROR;
 
@@ -471,37 +441,22 @@ int parsePath(char* path) {
                         if(!strcmp(sFileList[i]->d_name, DEFAULT_FILE)) {
 
                                 sFoundFile = 1;
+                                strcat(sAbsPath, DEFAULT_FILE);
                                 break;
                         }
                 }
 
                 debug_print("\tsFoundFile = %d\n", sFoundFile);
 
-                //concat DEFAULT_FILE to path
-                // if(sFoundFile) {
-                //
-                //         debug_print("\t%s\n", "adding to path");
-                //         char* tempPath = (char*)calloc(strlen(sPath) + strlen(DEFAULT_FILE) + 1, sizeof(char));
-                //         if(!tempPath)
-                //                 return CODE_INTERNAL_ERROR;
-                //         strcat(tempPath, sPath);
-                //         strcat(tempPath, DEFAULT_FILE);
-                //         free(sPath);
-                //         sPath = tempPath;
-                //
-                //         debug_print("\tpath is now: %s\n", sPath);
-                // }
-
         } else { //path is file
 
-                if(!S_ISREG(pathStats.st_mode) || access(absPath, R_OK)) {
+                if(!S_ISREG(pathStats.st_mode) || access(sAbsPath, R_OK)) {
 
                         return CODE_FORBIDDEN;
                 }
 
-                // return 0;
         }
-        debug_print("absPath = %s\n", absPath);
+        debug_print("sAbsPath = %s\n", sAbsPath);
         debug_print("%s\n", "parsePath END");
         return 0;
 }
@@ -516,24 +471,18 @@ int parsePath(char* path) {
 int sendResponse(int* sockfd, int type, char* path) {
         debug_print("sendResponse - %d\n", type);
 
-        // char* response = (char*)calloc(SIZE_RESPONSE, sizeof(char));
-        // if(!response)
-        //         return -1;
 
-        //sendHeader
-        //sendBody
-        //sendEndTags
-        // if(constructResponse(type, path) || writeResponse(sockfd, &response)) {
-        //         free(response);
-        //         return -1;
-        // }
         char* response = constructResponse(type, path);
         if(!response)
                 return -1;
 
+        if(writeResponse(sockfd, response, path))
+                return -1;
+
+        debug_print("response = \n%s\n", response);
         debug_print("%s\n", "sendResponse END");
-        // free(response);
-        // close(*sockfd);
+
+        free(response);
         return 0;
 }
 
@@ -543,11 +492,14 @@ int sendResponse(int* sockfd, int type, char* path) {
 
 //returns 0 on success, -1 on failure
 char* constructResponse(int type, char* path) {
-        debug_print("%s\n", "constructResponse");
+        debug_print("constructResponse - path = %s\n", path);
+
         char server_header[SIZE_HEADER] = "Server: webserver/1.0\r\n";
         char connection[SIZE_HEADER] = "Connection: close\r\n\r\n";
 
-        char location_header[SIZE_HEADER + strlen(path)];
+        int path_length = path ? strlen(path) : 0;
+
+        char location_header[SIZE_HEADER + path_length];
         char type_string[SIZE_HEADER];
         char response_type[SIZE_HEADER];
         char date_string[SIZE_HEADER + SIZE_DATE_BUFFER];
@@ -569,7 +521,6 @@ char* constructResponse(int type, char* path) {
         switch (type) {
 
         case CODE_OK:
-
                 strcat(type_string, CODE_OK_STRING);
                 break;
 
@@ -610,28 +561,30 @@ char* constructResponse(int type, char* path) {
         strftime(timebuf, sizeof(timebuf), RFC1123FMT, gmtime(&now));
         sprintf(date_string, "Date: %s\r\n", timebuf);
 
-        debug_print("sIsPathDir = %d\n", sIsPathDir);
+        debug_print("\tsIsPathDir = %d\n", sIsPathDir);
         char* mime = sIsPathDir || !(type == CODE_OK) ?
                      get_mime_type(DEFAULT_FILE) : get_mime_type(strrchr(path, '/'));
         if(mime)
                 sprintf(content_type, "Content-Type: %s\r\n", mime);
 
-
-        char* responseBody = NULL;
+        debug_print("\tmime = %s\n", mime);
+        char* responseBody =  NULL;
 
         if(type == CODE_OK) {
 
                 struct stat statBuff;
-                if(stat(path, &statBuff))
+                if(stat(sAbsPath, &statBuff))
                         return NULL;
 
                 if(!sIsPathDir || sFoundFile) {
+                        debug_print("\t%s\n", "file! Content-Length = file size");
                         sprintf(content_length, "Content-Length: %ld\r\n", statBuff.st_size);
                 } else {
-                        responseBody = getDirContents(path);
+                        debug_print("\t%s\n", "dir! Content-Length = length of dircontents");
+                        responseBody = getDirContents(sAbsPath);
                         if(!responseBody)
                                 return NULL;
-                        sprintf(content_length, "Content-Length: %ld\r\n", strlen(responseBody));
+                        sprintf(content_length, "Content-Length: %d\r\n", (int)strlen(responseBody));
                 }
 
 
@@ -642,11 +595,12 @@ char* constructResponse(int type, char* path) {
                 responseBody = getResponseBody(type);
                 if(!responseBody)
                         return NULL;
-                sprintf(content_length, "Content-Length: %ld\r\n", strlen(responseBody));
+                sprintf(content_length, "Content-Length: %d\r\n", (int)strlen(responseBody));
         }
 
-        sprintf(content_length, "Content-Length: %ld\r\n", strlen(responseBody));
+        // sprintf(content_length, "Content-Length: %d\r\n", (int)strlen(responseBody));
 
+        int responseBody_length = !responseBody ? 0 : (int)strlen(responseBody);
         int length = strlen(response_type)
                      + strlen(server_header)
                      + strlen(date_string)
@@ -655,7 +609,7 @@ char* constructResponse(int type, char* path) {
                      + strlen(content_length)
                      + strlen(last_modified)
                      + strlen(connection)
-                     + strlen(responseBody);
+                     + responseBody_length;
 
 
         char* response = (char*)calloc(length + 1, sizeof(char));
@@ -673,9 +627,10 @@ char* constructResponse(int type, char* path) {
                 content_length,
                 last_modified,
                 connection,
-                !sIsPathDir || sFoundFile ? "" : responseBody); //attach body only if not file
+                responseBody ? responseBody : ""); //attach body only if not file
 
-        free(responseBody);
+        if(responseBody)
+                free(responseBody);
         return response;
 }
 
@@ -847,9 +802,9 @@ char* get_mime_type(char* name) {
 /*********************************/
 /*********************************/
 
-int writeResponse(int* sockfd, char** response) {
-        debug_print("%s\n", "writeResponse");
-        int response_length = strlen(*response);
+int writeResponse(int* sockfd, char* response, char* path) {
+        debug_print("%s\n", "writeResponse START");
+        int response_length = strlen(response);
         int bytes_written = 0;
         int nBytes;
 
@@ -858,7 +813,7 @@ int writeResponse(int* sockfd, char** response) {
 
         while(bytes_written < response_length) {
 
-                if((nBytes = write((*sockfd), *response, strlen(*response))) < 0) {
+                if((nBytes = write((*sockfd), response, strlen(response))) < 0) {
                         debug_print("%s\n", "writing response failed");
                         return -1;
                 }
@@ -866,15 +821,70 @@ int writeResponse(int* sockfd, char** response) {
                 bytes_written += nBytes;
         }
 
+        if(path && (sFoundFile || !sIsPathDir)) {
+                return writeFile(sockfd);
+        }
+
+        // debug_print("%s\n", "writeResponse END");
         return 0;
 }
+
+/*********************************/
+/*********************************/
+/*********************************/
+
+int writeFile(int* sockfd) {
+        debug_print("%s\n", "writeFile START");
+
+        int fd = open(sAbsPath, O_RDONLY);
+        if(fd < 0)
+                return -1;
+
+        int nBytes;
+        int mBytes;
+        char buffer[SIZE_BUFFER + 1];
+        memset(buffer, 0, sizeof(buffer));
+        int bytes_read = 0;
+        int bytes_written = 0;
+
+        while((nBytes = read(fd, buffer, SIZE_BUFFER)) > 0) {
+
+                if(nBytes < 0) {
+                        debug_print("\t%s\n", "reading file failed");
+                        close(fd);
+                        return -1;
+                }
+
+                bytes_read += nBytes;
+                bytes_written = 0;
+                while(bytes_written < nBytes) {
+
+                        if((mBytes = write(fd, buffer, nBytes - bytes_written)) < 0) {
+                                debug_print("%s\n", "writing file failed");
+                                return -1;
+                        }
+
+                        bytes_written += mBytes;
+                }
+
+        }
+
+
+        close(fd);
+        debug_print("%s\n", "writeFile END");
+        return 0;
+}
+
 
 /******************************************************************************/
 /*************************** Misc Methods *************************************/
 /******************************************************************************/
 
-void freeFileList() {
-        debug_print("%s\n", "freeFileList");
+void freeGlobalVars() {
+        debug_print("%s\n", "freeGlobalVars");
+
+        if(sAbsPath)
+                free(sAbsPath);
 
         if(sFileList) {
                 debug_print("\t%s\n", "freeing sFileList");
@@ -883,7 +893,7 @@ void freeFileList() {
                         free(sFileList[i]);
                 free(sFileList);
         }
-        debug_print("%s\n", "freeFileList END");
+        debug_print("%s\n", "freeGlobalVars END");
 }
 
 /*********************************/
@@ -891,7 +901,7 @@ void freeFileList() {
 /*********************************/
 
 int replaceSubstring(char* str, char* orig, char* replace) {
-        debug_print("%s\n", "replaceSubstring");
+        debug_print("%s\n", "replaceSubstring START");
 
         int orig_length = strlen(orig);
         if(strlen(replace) > orig_length)
@@ -910,10 +920,10 @@ int replaceSubstring(char* str, char* orig, char* replace) {
                 //replace rest of str with temp
                 memset(origPtr, 0, strlen(origPtr));
                 strcat(origPtr, temp);
-                debug_print("origPtr = %s, temp = %s, str = %s\n", origPtr, temp, str);
+                debug_print("\torigPtr = %s, temp = %s, str = %s\n", origPtr, temp, str);
         }
 
-
+        debug_print("%s\n", "replaceSubstring END");
         return 0;
 }
 
