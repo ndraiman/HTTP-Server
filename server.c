@@ -27,8 +27,8 @@
 /****************************************/
 #define RFC1123FMT "%a, %d %b %Y %H:%M:%S GMT"
 #define NUM_OF_EXPECTED_TOKENS 3
-#define SIZE_BUFFER 2
-#define SIZE_REQUEST 64
+#define SIZE_BUFFER 512
+#define SIZE_REQUEST 4000
 #define SIZE_RESPONSE 2048
 #define SIZE_RESPONSE_BODY 1024
 #define SIZE_HEADER 64
@@ -100,6 +100,8 @@ char* get_mime_type(char*);
 int writeResponse(int*, char**);
 
 void freeGlobalVars();
+
+int replaceSubstring(char**, char*, char*);
 
 /******************************************************************************/
 /******************************************************************************/
@@ -180,16 +182,19 @@ int initServer() {
 
         threadpool* pool = create_threadpool(sPoolSize);
 
-        struct sockaddr_in cli;
+        // struct sockaddr_in cli;
         int new_sockfd;
-        int cli_length = sizeof(cli);
+        // int cli_length = sizeof(cli);
 
         int i;
         for(i = 0; i < sMaxRequests; i++) {
 
-                if((new_sockfd = accept(server_socket, (struct sockaddr*) &cli, (socklen_t*) &cli_length)) < 0) {
+                // NULL - dont care about client's IP & Port
+                if((new_sockfd = accept(server_socket, NULL, NULL)) < 0) {
                         perror("accept");
-                        exit(1);
+                        close(server_socket);
+                        destroy_threadpool(pool);
+                        exit(EXIT_FAILURE);
                 }
 
                 dispatch(pool, handler, (void*)&new_sockfd);
@@ -222,8 +227,7 @@ void initServerSocket(int* sockfd) {
                 exit(1);
         }
 
-        //TODO should backlog be sMaxRequests?
-        if(listen((*sockfd), sMaxRequests) < 0) {
+        if(listen((*sockfd), 5) < 0) {
                 perror("listen");
                 exit(1);
         }
@@ -281,8 +285,10 @@ int handler(void* arg) {
                 return -1;
         }
 
-        sendResponse(sockfd, CODE_OK);
-        //TODO what to do if sending response fails?
+        if(sendResponse(sockfd, CODE_OK)) {
+                fprintf(stderr, "sending response failed\n");
+                return -1;
+        }
 
         //Free Memory
         free(request);
@@ -346,6 +352,11 @@ int parseRequest(char** request) {
         char method[4];
         char protocol[64];
 
+        //cut request at the first '\r' (replace with '\0')
+        char* cut;
+        if((cut = strchr(*request, '\r')))
+                cut[0] = '\0';
+
         int assigned = sscanf((*request), "%4s %s %8s", method, sPath, protocol);
         debug_print("\tassigned = %d\n", assigned);
         if(assigned != NUM_OF_EXPECTED_TOKENS)
@@ -353,6 +364,9 @@ int parseRequest(char** request) {
 
         if(strcmp(method, "GET"))
                 return CODE_NOT_SUPPORTED;
+
+        if(strcmp(protocol, "HTTP/1.0") && strcmp(protocol, "HTTP/1.1"))
+                return CODE_BAD;
 
         //extract path from HTTP/1.0 requests
         //"host[:port]/path" - without http://
@@ -380,6 +394,8 @@ int parsePath() {
         int i;
         sFoundFile = 0;
 
+        replaceSubstring(&sPath, "%20", " ");
+
         //make sPath hold absolute path
         char* rootPath = getcwd(NULL, 0);
         debug_print("\trootPath = %s\n\tsPath = %s\n", rootPath, sPath);
@@ -391,12 +407,12 @@ int parsePath() {
         strcat(tempPath, rootPath);
         strcat(tempPath, sPath);
         debug_print("\ttempPath = %s\n", tempPath);
-        // free(sPath); //free previously allocated path
 
         free(rootPath); //free memory allocated by getcwd
         sLocationPath = sPath;
         sPath = tempPath;
         debug_print("\tsPath = %s\n", sPath);
+
 
         //Check path exists
         struct stat pathStats;
@@ -488,7 +504,6 @@ int hasPermissions(struct stat* fileStats) {
 //returns 0 on success, -1 on failure
 int sendResponse(int* sockfd, int type) {
         debug_print("sendResponse - %d\n", type);
-        //FIXME if sending the response fails?
 
         char* response = (char*)calloc(SIZE_RESPONSE, sizeof(char));
         if(!response)
@@ -586,10 +601,13 @@ int constructResponse(int type, char** response) {
         sprintf(date_string, "Date: %s\r\n", timebuf);
 
         debug_print("sIsPathDir = %d\n", sIsPathDir);
-        char content_type[SIZE_HEADER];
-        sprintf(content_type,
+        char content_type[SIZE_HEADER] = "";
+        char* mime = sIsPathDir || !(type == CODE_OK) ?
+                get_mime_type(DEFAULT_FILE) : get_mime_type(strrchr(sPath, '/'));
+        if(mime)
+                sprintf(content_type,
                 "Content-Type: %s\r\n",
-                sIsPathDir || !(type == CODE_OK) ? get_mime_type(DEFAULT_FILE) : get_mime_type(strrchr(sPath, '/')));
+                mime);
 
 
 
@@ -781,8 +799,6 @@ int getPathBody(char** title, int title_len, char** body, int body_len) {
                         strftime(timebuf, sizeof(timebuf), RFC1123FMT, gmtime(&statBuff.st_mtime));
 
 
-                        //FIXME uncomment if entity 500 bytes limit does not include html tags and mod date
-                        // char entity[SIZE_DIR_ENTITY + 2*strlen(sFileList[i]->d_name) + SIZE_DATE_BUFFER];
                         char entity[SIZE_DIR_ENTITY];
                         sprintf(entity, "<tr><td><A HREF=\"%s\">%s</A></td><td>%s</td>",
                                 sFileList[i]->d_name,
@@ -874,7 +890,6 @@ int writeResponse(int* sockfd, char** response) {
         while(bytes_written < response_length) {
 
                 if((nBytes = write((*sockfd), *response, strlen(*response))) < 0) {
-                        //FIXME what response to send?
                         debug_print("%s\n", "writing response failed");
                         return -1;
                 }
@@ -886,7 +901,7 @@ int writeResponse(int* sockfd, char** response) {
 }
 
 /******************************************************************************/
-/******************************************************************************/
+/*************************** Misc Methods *************************************/
 /******************************************************************************/
 
 void freeGlobalVars() {
@@ -905,6 +920,34 @@ void freeGlobalVars() {
                 free(sFileList);
         }
         debug_print("%s\n", "freeGlobalVars END");
+}
+
+/*********************************/
+/*********************************/
+/*********************************/
+
+int replaceSubstring(char** str, char* orig, char* replace) {
+        debug_print("%s\n", "replaceSubstring");
+
+        int orig_length = strlen(orig);
+        char* origPtr;
+
+        while((origPtr = strstr(*str, orig))) {
+
+                //create char* with replace
+                char temp[strlen(origPtr) + orig_length + 1];
+                memset(temp, 0, sizeof(temp));
+                strcat(temp, replace);
+                strcat(temp, origPtr + orig_length);
+
+                //replace rest of str with temp
+                memset(origPtr, 0, strlen(origPtr));
+                memcpy(origPtr, temp, strlen(temp));
+                debug_print("origPtr = %s, temp = %s, str = %s\n", origPtr, temp, *str);
+        }
+
+
+        return 0;
 }
 
 /******************************************************************************/
