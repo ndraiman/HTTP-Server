@@ -297,9 +297,16 @@ int handler(void* arg) {
         }
         debug_print("handler - path = %s\n", path);
 
-        sendResponse(&sockfd, CODE_OK, path);
+        if(sendResponse(&sockfd, CODE_OK, path)) {
+                sendResponse(&sockfd, CODE_INTERNAL_ERROR, NULL);
+                freeGlobalVars();
+                close(sockfd);
+                free(arg);
+                return -1;
+        }
+
+
         freeGlobalVars();
-        shutdown(sockfd, SHUT_RDWR); //FIXME
         close(sockfd);
         free(arg);
         return 0;
@@ -813,7 +820,7 @@ int writeResponse(int* sockfd, char* response, char* path) {
 
         while(bytes_written < response_length) {
 
-                if((nBytes = write((*sockfd), response, strlen(response))) < 0) {
+                if((nBytes = write(*sockfd, response, strlen(response))) < 0) {
                         debug_print("%s\n", "writing response failed");
                         return -1;
                 }
@@ -825,7 +832,7 @@ int writeResponse(int* sockfd, char* response, char* path) {
                 return writeFile(sockfd);
         }
 
-        // debug_print("%s\n", "writeResponse END");
+        debug_print("%s\n", "writeResponse END");
         return 0;
 }
 
@@ -855,11 +862,16 @@ int writeFile(int* sockfd) {
                         return -1;
                 }
 
+                // if((mBytes = write(fd, buffer, nBytes)) < 0) {
+                //         debug_print("%s\n", "writing file failed");
+                //         return -1;
+                // }
+
                 bytes_read += nBytes;
                 bytes_written = 0;
                 while(bytes_written < nBytes) {
 
-                        if((mBytes = write(fd, buffer, nBytes - bytes_written)) < 0) {
+                        if((mBytes = write(*sockfd, buffer, nBytes - bytes_written)) < 0) {
                                 debug_print("%s\n", "writing file failed");
                                 return -1;
                         }
