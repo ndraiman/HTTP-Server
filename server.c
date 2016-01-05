@@ -100,19 +100,19 @@ void initServerSocket(int*);
 
 //Request Handling
 int handler(void*);
-int readRequest(char*, int*);
+int readRequest(char*, int);
 int parseRequest(char*, char*);
 int parsePath(char*);
 int hasPermissions(struct stat*);
 
 //Response Handling
-int sendResponse(int*, int, char*);
+int sendResponse(int, int, char*);
 char* constructResponse(int, char*);
 char* getResponseBody(int);
 char* getDirContents(char*);
 char* get_mime_type(char*);
-int writeResponse(int*, char*, char*);
-int writeFile(int*);
+int writeResponse(int, char*, char*);
+int writeFile(int);
 
 //Misc
 void freeGlobalVars();
@@ -197,17 +197,18 @@ int initServer() {
 
         threadpool* pool = create_threadpool(sPoolSize);
 
+        int* new_sockfd;
         int i;
         for(i = 0; i < sMaxRequests; i++) {
 
-                int* new_sockfd = (int*)calloc(1, sizeof(int));
+                new_sockfd = (int*)calloc(1, sizeof(int));
                 if(!new_sockfd) {
                         perror("calloc");
                         continue;
                 }
 
                 // NULL - dont care about client's IP & Port
-                if(((*new_sockfd) = accept(server_socket, NULL, NULL)) < 0) {
+                if((*new_sockfd = accept(server_socket, NULL, NULL)) < 0) {
                         perror("accept");
                         continue;
                 }
@@ -228,7 +229,7 @@ int initServer() {
 void initServerSocket(int* sockfd) {
 
         debug_print("\t%s\n", "initServerSocket");
-        if(((*sockfd) = socket(PF_INET, SOCK_STREAM, 0)) < 0) {
+        if((*sockfd = socket(PF_INET, SOCK_STREAM, 0)) < 0) {
                 perror("socket");
                 exit(-1);
         }
@@ -238,12 +239,12 @@ void initServerSocket(int* sockfd) {
         srv.sin_port = htons(sPort);
         srv.sin_addr.s_addr = htonl(INADDR_ANY);
 
-        if(bind((*sockfd), (struct sockaddr*) &srv, sizeof(srv)) < 0) {
+        if(bind(*sockfd, (struct sockaddr*) &srv, sizeof(srv)) < 0) {
                 perror("bind");
                 exit(1);
         }
 
-        if(listen((*sockfd), 5) < 0) {
+        if(listen(*sockfd, 5) < 0) {
                 perror("listen");
                 exit(1);
         }
@@ -266,46 +267,46 @@ int handler(void* arg) {
         sFileList = NULL;
         sNumOfFiles = 0;
 
-        int sockfd = *(int*)(arg);
-        if(!sockfd)
+        if(!arg)
                 return -1;
+
+        int* temp = (int*)(arg);
+        int sockfd = *temp;
+        free(arg);
+
 
         char request[SIZE_REQUEST];
         char path[SIZE_REQUEST];
         memset(request, 0, sizeof(request));
         memset(path, 0, sizeof(path));
 
-        if(readRequest(request, &sockfd)) {
-                sendResponse(&sockfd, CODE_INTERNAL_ERROR, NULL);
+        if(readRequest(request, sockfd)) {
+                sendResponse(sockfd, CODE_INTERNAL_ERROR, NULL);
                 freeGlobalVars();
                 close(sockfd);
-                free(arg);
                 return -1;
         }
         debug_print("handler - request = %s\n", request);
 
         int parser_code;
         if((parser_code = parseRequest(request, path)) || (parser_code =  parsePath(path))) {
-                sendResponse(&sockfd, parser_code, path);
+                sendResponse(sockfd, parser_code, path);
                 freeGlobalVars();
                 close(sockfd);
-                free(arg);
                 return -1;
         }
         debug_print("handler - path = %s\n", path);
 
-        if(sendResponse(&sockfd, CODE_OK, path)) {
-                sendResponse(&sockfd, CODE_INTERNAL_ERROR, NULL);
+        if(sendResponse(sockfd, CODE_OK, path)) {
+                sendResponse(sockfd, CODE_INTERNAL_ERROR, NULL);
                 freeGlobalVars();
                 close(sockfd);
-                free(arg);
                 return -1;
         }
 
 
         freeGlobalVars();
         close(sockfd);
-        free(arg);
         return 0;
 }
 
@@ -317,7 +318,7 @@ int handler(void* arg) {
 
 //returns 0 on success, -1 on failure
 //isSocket - to differentiate between reading server socket or file.
-int readRequest(char* request, int* sockfd) {
+int readRequest(char* request, int sockfd) {
         debug_print("%s\n", "readRequest");
 
         int nBytes;
@@ -325,7 +326,7 @@ int readRequest(char* request, int* sockfd) {
         memset(buffer, 0, sizeof(buffer));
         int bytes_read = 0;
 
-        while((nBytes = read((*sockfd), buffer, SIZE_BUFFER)) > 0) {
+        while((nBytes = read(sockfd, buffer, SIZE_BUFFER)) > 0) {
 
                 if(nBytes < 0) {
                         debug_print("\t%s\n", "reading request failed");
@@ -472,7 +473,7 @@ int parsePath(char* path) {
 /******************************************************************************/
 
 //returns 0 on success, -1 on failure
-int sendResponse(int* sockfd, int type, char* path) {
+int sendResponse(int sockfd, int type, char* path) {
         debug_print("sendResponse - %d\n", type);
 
 
@@ -813,7 +814,7 @@ char* get_mime_type(char* name) {
 /*********************************/
 /*********************************/
 
-int writeResponse(int* sockfd, char* response, char* path) {
+int writeResponse(int sockfd, char* response, char* path) {
         debug_print("%s\n", "writeResponse START");
         int response_length = strlen(response);
         int bytes_written = 0;
@@ -822,7 +823,7 @@ int writeResponse(int* sockfd, char* response, char* path) {
 
         while(bytes_written < response_length) {
 
-                if((nBytes = write(*sockfd, response, strlen(response))) < 0) {
+                if((nBytes = write(sockfd, response, strlen(response))) < 0) {
                         debug_print("%s\n", "writing response failed");
                         return -1;
                 }
@@ -843,7 +844,7 @@ int writeResponse(int* sockfd, char* response, char* path) {
 /*********************************/
 /*********************************/
 //read file and write to client
-int writeFile(int* sockfd) {
+int writeFile(int sockfd) {
         debug_print("%s\n", "writeFile START");
 
         int fd = open(sAbsPath, O_RDONLY);
@@ -869,7 +870,7 @@ int writeFile(int* sockfd) {
                 bytes_written = 0;
                 while(bytes_written < nBytes) {
 
-                        if((mBytes = write(*sockfd, buffer, nBytes - bytes_written)) < 0) {
+                        if((mBytes = write(sockfd, buffer, nBytes - bytes_written)) < 0) {
                                 debug_print("%s\n", "writing file failed");
                                 return -1;
                         }
