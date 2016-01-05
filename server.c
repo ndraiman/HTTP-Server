@@ -203,17 +203,13 @@ int initServer() {
                 int* new_sockfd = (int*)calloc(1, sizeof(int));
                 if(!new_sockfd) {
                         perror("calloc");
-                        close(server_socket);
-                        destroy_threadpool(pool);
-                        exit(EXIT_FAILURE);
+                        continue;
                 }
 
                 // NULL - dont care about client's IP & Port
-                if((*new_sockfd = accept(server_socket, NULL, NULL)) < 0) {
+                if(((*new_sockfd) = accept(server_socket, NULL, NULL)) < 0) {
                         perror("accept");
-                        close(server_socket);
-                        destroy_threadpool(pool);
-                        exit(EXIT_FAILURE);
+                        continue;
                 }
 
                 dispatch(pool, handler, (void*)new_sockfd);
@@ -230,6 +226,7 @@ int initServer() {
 /*********************************/
 
 void initServerSocket(int* sockfd) {
+
         debug_print("\t%s\n", "initServerSocket");
         if(((*sockfd) = socket(PF_INET, SOCK_STREAM, 0)) < 0) {
                 perror("socket");
@@ -501,6 +498,7 @@ int sendResponse(int* sockfd, int type, char* path) {
 
 //returns 0 on success, -1 on failure
 char* constructResponse(int type, char* path) {
+
         debug_print("constructResponse - path = %s\n", path);
 
         char server_header[SIZE_HEADER] = "Server: webserver/1.0\r\n";
@@ -577,8 +575,9 @@ char* constructResponse(int type, char* path) {
                 sprintf(content_type, "Content-Type: %s\r\n", mime);
 
         debug_print("\tmime = %s\n", mime);
-        char* responseBody =  NULL;
 
+        //get ResponseBody or if file, get its size.
+        char* responseBody =  NULL;
         if(type == CODE_OK) {
 
                 struct stat statBuff;
@@ -586,9 +585,12 @@ char* constructResponse(int type, char* path) {
                         return NULL;
 
                 if(!sIsPathDir || sFoundFile) {
+
                         debug_print("\t%s\n", "file! Content-Length = file size");
                         sprintf(content_length, "Content-Length: %ld\r\n", statBuff.st_size);
+
                 } else {
+
                         debug_print("\t%s\n", "dir! Content-Length = length of dircontents");
                         responseBody = getDirContents(sAbsPath);
                         if(!responseBody)
@@ -607,7 +609,6 @@ char* constructResponse(int type, char* path) {
                 sprintf(content_length, "Content-Length: %d\r\n", (int)strlen(responseBody));
         }
 
-        // sprintf(content_length, "Content-Length: %d\r\n", (int)strlen(responseBody));
 
         int responseBody_length = !responseBody ? 0 : (int)strlen(responseBody);
         int length = strlen(response_type)
@@ -647,6 +648,7 @@ char* constructResponse(int type, char* path) {
 /*********************************/
 /*********************************/
 /*********************************/
+//returns Server Error Messages response body
 char* getResponseBody(int type) {
 
         char title[SIZE_HTML_TAGS];
@@ -703,7 +705,7 @@ char* getResponseBody(int type) {
 /*********************************/
 /*********************************/
 /*********************************/
-
+//returns dir contents of path (path is dir)
 char* getDirContents(char* path) {
         debug_print("getDirContents\n\tpath = %s\n", path);
 
@@ -829,6 +831,7 @@ int writeResponse(int* sockfd, char* response, char* path) {
         }
 
         if(path && (sFoundFile || !sIsPathDir)) {
+                //if sending DEFAULT_FILE or another file
                 return writeFile(sockfd);
         }
 
@@ -839,7 +842,7 @@ int writeResponse(int* sockfd, char* response, char* path) {
 /*********************************/
 /*********************************/
 /*********************************/
-
+//read file and write to client
 int writeFile(int* sockfd) {
         debug_print("%s\n", "writeFile START");
 
@@ -906,7 +909,8 @@ void freeGlobalVars() {
 /*********************************/
 /*********************************/
 /*********************************/
-
+//replace occurences of orig in str with replace.
+//since str is static, lenght of replace must be <= from lenght of orig
 int replaceSubstring(char* str, char* orig, char* replace) {
         debug_print("%s\n", "replaceSubstring START");
 
