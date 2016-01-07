@@ -429,6 +429,28 @@ int parsePath(char* path) {
 
         }
 
+        //TODO delete
+        // if(access(sAbsPath, R_OK)) {
+        //         debug_print("%s\n", "DAAAAAAAAAAAAAAAAAAAAAAAAAAAAMN!!!");
+        // }
+        //
+        // int temp_length = strlen(sAbsPath) - strlen(strrchr(sAbsPath, '/') + 1);
+        // char temp[temp_length];
+        // memset(temp, 0, sizeof(temp));
+        //
+        // strncat(temp, sAbsPath, temp_length);
+        // debug_print("\ttemp_l = %d, temp = %s\n", temp_length, temp);
+        //
+        // if(access(temp, X_OK)) {
+        //         perror("access X");
+        //         debug_print("%s\n", "DAFUFUFUFUFUFU!!!");
+        // }
+        //
+        // if(access(temp, R_OK)) {
+        //         perror("access R");
+        //         debug_print("%s\n", "15614267272724625243523!!!");
+        // }
+
 
         if(sIsPathDir) {
 
@@ -455,7 +477,13 @@ int parsePath(char* path) {
 
         } else { //path is file
 
-                if(!S_ISREG(pathStats.st_mode) || access(sAbsPath, R_OK)) {
+                //copy dir path
+                int dir_path_length = strlen(sAbsPath) - strlen(strrchr(sAbsPath, '/') + 1);
+                char dir_path[dir_path_length];
+                memset(dir_path, 0, sizeof(dir_path));
+                strncat(dir_path, sAbsPath, dir_path_length);
+
+                if(!S_ISREG(pathStats.st_mode) || access(sAbsPath, R_OK) || access(dir_path, X_OK)) {
 
                         return CODE_FORBIDDEN;
                 }
