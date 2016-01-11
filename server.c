@@ -279,18 +279,18 @@ int handler(void* arg) {
         char path[SIZE_REQUEST];
         memset(request, 0, sizeof(request));
         memset(path, 0, sizeof(path));
+        int return_code;
 
-        if(readRequest(request, sockfd)) {
-                sendResponse(sockfd, CODE_INTERNAL_ERROR, NULL);
+        if((return_code = readRequest(request, sockfd))) {
+                sendResponse(sockfd, return_code, NULL);
                 freeGlobalVars();
                 close(sockfd);
                 return -1;
         }
         debug_print("handler - request = %s\n", request);
 
-        int parser_code;
-        if((parser_code = parseRequest(request, path)) || (parser_code =  parsePath(path))) {
-                sendResponse(sockfd, parser_code, path);
+        if((return_code = parseRequest(request, path)) || (return_code =  parsePath(path))) {
+                sendResponse(sockfd, return_code, path);
                 freeGlobalVars();
                 close(sockfd);
                 return -1;
@@ -316,8 +316,7 @@ int handler(void* arg) {
 /******************************************************************************/
 /******************************************************************************/
 
-//returns 0 on success, -1 on failure
-//isSocket - to differentiate between reading server socket or file.
+//returns 0 on success, error number on failure
 int readRequest(char* request, int sockfd) {
         debug_print("%s\n", "readRequest");
 
@@ -330,7 +329,7 @@ int readRequest(char* request, int sockfd) {
 
                 if(nBytes < 0) {
                         debug_print("\t%s\n", "reading request failed");
-                        return -1;
+                        return CODE_INTERNAL_ERROR;
                 }
 
                 bytes_read += nBytes;
@@ -341,6 +340,9 @@ int readRequest(char* request, int sockfd) {
                         break;
         }
         debug_print("\tbytes read = %d\n", bytes_read);
+        if(!bytes_read)
+                return CODE_BAD;
+
         return 0;
 }
 
@@ -399,7 +401,7 @@ int parsePath(char* path) {
         replaceSubstring(path, "%20", " ");
         debug_print("path = %s\n", path);
 
-        //make sPath hold absolute path
+        //make sAbsPath hold absolute path
         char* rootPath = getcwd(NULL, 0);
         if(!rootPath)
                 return -1;
@@ -509,12 +511,13 @@ int sendResponse(int sockfd, int type, char* path) {
         if(!response)
                 return -1;
 
+        debug_print("response = \n%s\n", response);
+
         if(writeResponse(sockfd, response, path)) {
                 free(response);
                 return -1;
         }
 
-        debug_print("response = \n%s\n", response);
         debug_print("%s\n", "sendResponse END");
 
         free(response);
@@ -860,6 +863,7 @@ int writeResponse(int sockfd, char* response, char* path) {
         }
 
         if(path && (sFoundFile || !sIsPathDir)) {
+                debug_print("sFoundFile = %d, sIsPathDir = %d, path = %s\n", sFoundFile, sIsPathDir, path);
                 //if sending DEFAULT_FILE or another file
                 return writeFile(sockfd);
         }
@@ -876,8 +880,10 @@ int writeFile(int sockfd) {
         debug_print("%s\n", "writeFile START");
 
         int fd = open(sAbsPath, O_RDONLY);
-        if(fd < 0)
+        if(fd < 0) {
+                debug_print("\t%s\n", "open file failed");
                 return -1;
+        }
 
         int nBytes;
         int mBytes;
@@ -900,6 +906,7 @@ int writeFile(int sockfd) {
 
                         if((mBytes = write(sockfd, buffer, nBytes - bytes_written)) < 0) {
                                 debug_print("%s\n", "writing file failed");
+                                close(fd);
                                 return -1;
                         }
 
