@@ -31,7 +31,8 @@
 #define DEFAULT_FILE "index.html"
 #define DIR_CONTENTS_TITLE "Index of %s"
 
-#define SIZE_BUFFER 512
+#define SIZE_READ_BUFFER 2
+#define SIZE_WRITE_BUFFER 512
 #define SIZE_REQUEST 4000
 #define SIZE_RESPONSE 2048
 #define SIZE_RESPONSE_BODY 1024
@@ -321,11 +322,11 @@ int readRequest(char* request, int sockfd) {
         debug_print("%s\n", "readRequest");
 
         int nBytes;
-        char buffer[SIZE_BUFFER + 1];
+        char buffer[SIZE_READ_BUFFER + 1];
         memset(buffer, 0, sizeof(buffer));
         int bytes_read = 0;
 
-        while((nBytes = read(sockfd, buffer, SIZE_BUFFER)) > 0) {
+        while((nBytes = read(sockfd, buffer, SIZE_READ_BUFFER)) > 0) {
 
                 if(nBytes < 0) {
                         debug_print("\t%s\n", "reading request failed");
@@ -887,12 +888,12 @@ int writeFile(int sockfd) {
 
         int nBytes;
         int mBytes;
-        char buffer[SIZE_BUFFER + 1];
+        char buffer[SIZE_WRITE_BUFFER + 1];
         memset(buffer, 0, sizeof(buffer));
         int bytes_read = 0;
         int bytes_written = 0;
 
-        while((nBytes = read(fd, buffer, SIZE_BUFFER)) > 0) {
+        while((nBytes = read(fd, buffer, SIZE_WRITE_BUFFER)) > 0) {
 
                 if(nBytes < 0) {
                         debug_print("\t%s\n", "reading file failed");
@@ -928,9 +929,11 @@ int writeFile(int sockfd) {
 
 void freeGlobalVars() {
         debug_print("%s\n", "freeGlobalVars");
-
-        if(sAbsPath)
+        debug_print("\tsAbsPath = %s\n", sAbsPath);
+        if(sAbsPath) {
+                debug_print("\t%s\n", "freeing sAbsPath");
                 free(sAbsPath);
+        }
 
         if(sFileList) {
                 debug_print("\t%s\n", "freeing sFileList");
