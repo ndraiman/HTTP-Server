@@ -432,28 +432,6 @@ int parsePath(char* path) {
 
         }
 
-        //TODO delete
-        // if(access(sAbsPath, R_OK)) {
-        //         debug_print("%s\n", "DAAAAAAAAAAAAAAAAAAAAAAAAAAAAMN!!!");
-        // }
-        //
-        // int temp_length = strlen(sAbsPath) - strlen(strrchr(sAbsPath, '/') + 1);
-        // char temp[temp_length];
-        // memset(temp, 0, sizeof(temp));
-        //
-        // strncat(temp, sAbsPath, temp_length);
-        // debug_print("\ttemp_l = %d, temp = %s\n", temp_length, temp);
-        //
-        // if(access(temp, X_OK)) {
-        //         perror("access X");
-        //         debug_print("%s\n", "DAFUFUFUFUFUFU!!!");
-        // }
-        //
-        // if(access(temp, R_OK)) {
-        //         perror("access R");
-        //         debug_print("%s\n", "15614267272724625243523!!!");
-        // }
-
 
         if(sIsPathDir) {
 
