@@ -6,6 +6,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <dirent.h>
+#include <signal.h>
 #include "threadpool.h"
 
 #define DEBUG 1 //TODO disable debug prints
@@ -79,14 +80,13 @@
 /****************************/
 /***** Static Variables *****/
 /****************************/
-static int sPort = 0;
-static int sPoolSize = 0;
-static int sMaxRequests = 0;
-static int sIsPathDir = 0;
-static int sFoundFile = 0;
-static struct dirent** sFileList = NULL;
-static int sNumOfFiles = 0;
-static char* sAbsPath = NULL;
+int sPort = 0;
+int sPoolSize = 0;
+int sMaxRequests = 0;
+
+int sIsPathDir = 0;
+int sFoundFile = 0;
+int sNumOfFiles = 0;
 
 
 
@@ -103,17 +103,17 @@ void initServerSocket(int*);
 int handler(void*);
 int readRequest(char*, int);
 int parseRequest(char*, char*);
-int parsePath(char*);
+int parsePath(char*, char**, struct dirent***);
 int hasPermissions(struct stat*);
 
 //Response Handling
-int sendResponse(int, int, char*);
-char* constructResponse(int, char*);
+int sendResponse(int, int, char*, char*, struct dirent**);
+char* constructResponse(int, char*, char*, struct dirent**);
 char* getResponseBody(int);
-char* getDirContents(char*);
+char* getDirContents(char*, struct dirent**);
 char* get_mime_type(char*);
-int writeResponse(int, char*, char*);
-int writeFile(int);
+int writeResponse(int, char*, char*, char*);
+int writeFile(int, char*);
 
 //Misc
 void freeGlobalVars();
@@ -196,6 +196,15 @@ int initServer() {
         int server_socket = 0;
         initServerSocket(&server_socket);
 
+        struct sigaction sa;
+        memset(&sa, 0, sizeof(sa));
+        sa.sa_handler = SIG_IGN;
+        sa.sa_flags = 0;
+        if (sigaction(SIGPIPE, &sa, 0) == -1) {
+                perror("sigaction");
+                exit(1);
+        }
+
         threadpool* pool = create_threadpool(sPoolSize);
 
         int* new_sockfd;
@@ -262,12 +271,6 @@ void initServerSocket(int* sockfd) {
 int handler(void* arg) {
         debug_print("handler - tid = %d\n", (int)pthread_self());
 
-        sAbsPath = NULL;
-        sIsPathDir = 0;
-        sFoundFile = 0;
-        sFileList = NULL;
-        sNumOfFiles = 0;
-
         if(!arg)
                 return -1;
 
@@ -275,38 +278,43 @@ int handler(void* arg) {
         int sockfd = *temp;
         free(arg);
 
+        sIsPathDir = 0;
+        sFoundFile = 0;
+        sNumOfFiles = 0;
+        char* absPath = NULL;
+        struct dirent** fileList = NULL;
+        int return_code;
 
         char request[SIZE_REQUEST];
         char path[SIZE_REQUEST];
         memset(request, 0, sizeof(request));
         memset(path, 0, sizeof(path));
-        int return_code;
 
         if((return_code = readRequest(request, sockfd))) {
-                sendResponse(sockfd, return_code, NULL);
-                freeGlobalVars();
+                sendResponse(sockfd, return_code, NULL, NULL, NULL);
+                freeGlobalVars(&absPath, &fileList);
                 close(sockfd);
                 return -1;
         }
         debug_print("handler - request = %s\n", request);
 
-        if((return_code = parseRequest(request, path)) || (return_code =  parsePath(path))) {
-                sendResponse(sockfd, return_code, path);
-                freeGlobalVars();
+        if((return_code = parseRequest(request, path)) || (return_code =  parsePath(path, &absPath, &fileList))) {
+                sendResponse(sockfd, return_code, path, absPath, fileList);
+                freeGlobalVars(&absPath, &fileList);
                 close(sockfd);
                 return -1;
         }
         debug_print("handler - path = %s\n", path);
 
-        if(sendResponse(sockfd, CODE_OK, path)) {
-                sendResponse(sockfd, CODE_INTERNAL_ERROR, NULL);
-                freeGlobalVars();
+        if(sendResponse(sockfd, CODE_OK, path, absPath, fileList)) {
+                sendResponse(sockfd, CODE_INTERNAL_ERROR, NULL, NULL, NULL);
+                freeGlobalVars(&absPath, &fileList);
                 close(sockfd);
                 return -1;
         }
 
 
-        freeGlobalVars();
+        freeGlobalVars(&absPath, &fileList);
         close(sockfd);
         return 0;
 }
@@ -395,7 +403,7 @@ int parseRequest(char* request, char* path) {
 /*********************************/
 
 //returns 0 on success, error number on failure
-int parsePath(char* path) {
+int parsePath(char* path, char** absPath, struct dirent*** fileList) {
         debug_print("parsePath START - path = %s\n", path);
         int i;
 
@@ -408,18 +416,18 @@ int parsePath(char* path) {
                 return -1;
 
         int absPath_length = strlen(rootPath) + strlen(path) + strlen(DEFAULT_FILE) + 1;
-        sAbsPath = (char*)calloc(absPath_length, sizeof(char));
-        if(!sAbsPath)
+        (*absPath) = (char*)calloc(absPath_length, sizeof(char));
+        if(!(*absPath))
                 return -1;
-        strcat(sAbsPath, rootPath);
-        strcat(sAbsPath, path);
+        strcat((*absPath), rootPath);
+        strcat((*absPath), path);
 
         free(rootPath);
-        debug_print("absPath = %s\n", sAbsPath);
+        debug_print("absPath = %s\n", (*absPath));
 
         //Check path exists
         struct stat pathStats;
-        if(stat(sAbsPath, &pathStats)) {
+        if(stat((*absPath), &pathStats)) {
                 debug_print("\t%s\n", "stat return -1");
                 return CODE_NOT_FOUND;
         }
@@ -435,21 +443,21 @@ int parsePath(char* path) {
 
         if(sIsPathDir) {
 
-                if(sAbsPath[strlen(sAbsPath) - 1] != '/')
+                if((*absPath)[strlen((*absPath)) - 1] != '/')
                         return CODE_FOUND;
 
 
-                sNumOfFiles = scandir(sAbsPath, &sFileList, NULL, alphasort);
+                sNumOfFiles = scandir((*absPath), fileList, NULL, alphasort);
                 if(sNumOfFiles < 0)
                         return CODE_INTERNAL_ERROR;
 
                 debug_print("\tPrinting scandir retval, numOfFiles = %d\n", sNumOfFiles);
                 for(i = 0; i < sNumOfFiles; i++) {
-                        debug_print("\t%s [%d]\n", sFileList[i]->d_name, i);
-                        if(!strcmp(sFileList[i]->d_name, DEFAULT_FILE)) {
+                        debug_print("\t%s [%d]\n", (*fileList)[i]->d_name, i);
+                        if(!strcmp((*fileList)[i]->d_name, DEFAULT_FILE)) {
 
                                 sFoundFile = 1;
-                                strcat(sAbsPath, DEFAULT_FILE);
+                                strcat((*absPath), DEFAULT_FILE);
                                 break;
                         }
                 }
@@ -459,18 +467,18 @@ int parsePath(char* path) {
         } else { //path is file
 
                 //copy dir path
-                int dir_path_length = strlen(sAbsPath) - strlen(strrchr(sAbsPath, '/') + 1);
+                int dir_path_length = strlen((*absPath)) - strlen(strrchr((*absPath), '/') + 1);
                 char dir_path[dir_path_length];
                 memset(dir_path, 0, sizeof(dir_path));
-                strncat(dir_path, sAbsPath, dir_path_length);
+                strncat(dir_path, (*absPath), dir_path_length);
 
-                if(!S_ISREG(pathStats.st_mode) || access(sAbsPath, R_OK) || access(dir_path, X_OK)) {
+                if(!S_ISREG(pathStats.st_mode) || access((*absPath), R_OK) || access(dir_path, X_OK)) {
 
                         return CODE_FORBIDDEN;
                 }
 
         }
-        debug_print("sAbsPath = %s\n", sAbsPath);
+        debug_print("sAbsPath = %s\n", (*absPath));
         debug_print("%s\n", "parsePath END");
         return 0;
 }
@@ -482,17 +490,17 @@ int parsePath(char* path) {
 /******************************************************************************/
 
 //returns 0 on success, -1 on failure
-int sendResponse(int sockfd, int type, char* path) {
+int sendResponse(int sockfd, int type, char* path, char* absPath, struct dirent** fileList) {
         debug_print("sendResponse - %d\n", type);
 
 
-        char* response = constructResponse(type, path);
+        char* response = constructResponse(type, path, absPath, fileList);
         if(!response)
                 return -1;
 
         debug_print("response = \n%s\n", response);
 
-        if(writeResponse(sockfd, response, path)) {
+        if(writeResponse(sockfd, response, path, absPath)) {
                 free(response);
                 return -1;
         }
@@ -508,7 +516,7 @@ int sendResponse(int sockfd, int type, char* path) {
 /*********************************/
 
 //returns 0 on success, -1 on failure
-char* constructResponse(int type, char* path) {
+char* constructResponse(int type, char* path, char* absPath, struct dirent** fileList) {
 
         debug_print("constructResponse - path = %s\n", path);
 
@@ -592,7 +600,7 @@ char* constructResponse(int type, char* path) {
         if(type == CODE_OK) {
 
                 struct stat statBuff;
-                if(stat(sAbsPath, &statBuff))
+                if(stat(absPath, &statBuff))
                         return NULL;
 
                 if(!sIsPathDir || sFoundFile) {
@@ -603,7 +611,7 @@ char* constructResponse(int type, char* path) {
                 } else {
 
                         debug_print("\t%s\n", "dir! Content-Length = length of dircontents");
-                        responseBody = getDirContents(sAbsPath);
+                        responseBody = getDirContents(absPath, fileList);
                         if(!responseBody)
                                 return NULL;
                         sprintf(content_length, "Content-Length: %d\r\n", (int)strlen(responseBody));
@@ -717,7 +725,7 @@ char* getResponseBody(int type) {
 /*********************************/
 /*********************************/
 //returns dir contents of path (path is dir)
-char* getDirContents(char* path) {
+char* getDirContents(char* path, struct dirent** fileList) {
         debug_print("getDirContents\n\tpath = %s\n", path);
 
         debug_print("\t%s\n", "reading dir");
@@ -737,13 +745,13 @@ char* getDirContents(char* path) {
 
         for(i = 0; i < sNumOfFiles; i++) {
 
-                if(!strcmp(sFileList[i]->d_name, ".") || !strcmp(sFileList[i]->d_name, ".."))
+                if(!strcmp(fileList[i]->d_name, ".") || !strcmp(fileList[i]->d_name, ".."))
                         continue;
 
-                char tempPath[strlen(path) + strlen(sFileList[i]->d_name) + 1];
+                char tempPath[strlen(path) + strlen(fileList[i]->d_name) + 1];
                 memset(tempPath, 0, sizeof(tempPath));
                 strcat(tempPath, path);
-                strcat(tempPath, sFileList[i]->d_name);
+                strcat(tempPath, fileList[i]->d_name);
                 debug_print("tempPath = %s\n", tempPath);
 
                 struct stat statBuff;
@@ -755,8 +763,8 @@ char* getDirContents(char* path) {
 
                 char entity[SIZE_DIR_ENTITY];
                 sprintf(entity, "<tr><td><A HREF=\"%s\">%s</A></td><td>%s</td>",
-                        sFileList[i]->d_name,
-                        sFileList[i]->d_name,
+                        fileList[i]->d_name,
+                        fileList[i]->d_name,
                         timebuf);
 
                 if(S_ISDIR(statBuff.st_mode)) {
@@ -824,7 +832,7 @@ char* get_mime_type(char* name) {
 /*********************************/
 /*********************************/
 
-int writeResponse(int sockfd, char* response, char* path) {
+int writeResponse(int sockfd, char* response, char* path, char* absPath) {
         debug_print("%s\n", "writeResponse START");
         int response_length = strlen(response);
         int bytes_written = 0;
@@ -844,7 +852,7 @@ int writeResponse(int sockfd, char* response, char* path) {
         if(path && (sFoundFile || !sIsPathDir)) {
                 debug_print("sFoundFile = %d, sIsPathDir = %d, path = %s\n", sFoundFile, sIsPathDir, path);
                 //if sending DEFAULT_FILE or another file
-                return writeFile(sockfd);
+                return writeFile(sockfd, absPath);
         }
 
         debug_print("%s\n", "writeResponse END");
@@ -855,10 +863,10 @@ int writeResponse(int sockfd, char* response, char* path) {
 /*********************************/
 /*********************************/
 //read file and write to client
-int writeFile(int sockfd) {
+int writeFile(int sockfd, char* absPath) {
         debug_print("%s\n", "writeFile START");
 
-        int fd = open(sAbsPath, O_RDONLY);
+        int fd = open(absPath, O_RDONLY);
         if(fd < 0) {
                 debug_print("\t%s\n", "open file failed");
                 return -1;
@@ -905,20 +913,20 @@ int writeFile(int sockfd) {
 /*************************** Misc Methods *************************************/
 /******************************************************************************/
 
-void freeGlobalVars() {
+void freeGlobalVars(char** absPath, struct dirent*** fileList) {
         debug_print("%s\n", "freeGlobalVars");
-        debug_print("\tsAbsPath = %s\n", sAbsPath);
-        if(sAbsPath) {
+        debug_print("\tsAbsPath = %s\n", (*absPath));
+        if((*absPath)) {
                 debug_print("\t%s\n", "freeing sAbsPath");
-                free(sAbsPath);
+                free((*absPath));
         }
 
-        if(sFileList) {
+        if((*fileList)) {
                 debug_print("\t%s\n", "freeing sFileList");
                 int i;
                 for(i = 0; i < sNumOfFiles; i++)
-                        free(sFileList[i]);
-                free(sFileList);
+                        free((*fileList)[i]);
+                free((*fileList));
         }
         debug_print("%s\n", "freeGlobalVars END");
 }
