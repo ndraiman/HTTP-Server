@@ -84,6 +84,7 @@ int sPort = 0;
 int sPoolSize = 0;
 int sMaxRequests = 0;
 
+//struct to hold response related variables
 typedef struct response_info_st {
         int isPathDir;
         int foundFile;
@@ -105,8 +106,6 @@ void initServerSocket(int*);
 
 //Request Handling
 int handler(void*);
-void initResponseInfo(response_info_t*);
-void freeResponseInfo(response_info_t*);
 int readRequest(char*, int);
 int parseRequest(char*, char*);
 int parsePath(char*, response_info_t*);
@@ -122,7 +121,8 @@ int writeResponse(int, char*, char*, response_info_t*);
 int writeFile(int, char*);
 
 //Misc
-void freeGlobalVars();
+void initResponseInfo(response_info_t*);
+void freeResponseInfo(response_info_t*);
 int replaceSubstring(char*, char*, char*);
 
 /******************************************************************************/
