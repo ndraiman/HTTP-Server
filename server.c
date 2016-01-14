@@ -300,7 +300,7 @@ int handler(void* arg) {
         memset(request, 0, sizeof(request));
         memset(path, 0, sizeof(path));
 
-        if((return_code = readRequest(request, sockfd))) {
+        if((return_code = readRequest(request, sockfd)) || (return_code = parseRequest(request, path))) {
                 sendResponse(sockfd, return_code, NULL, resp_info);
                 freeResponseInfo(resp_info);
                 close(sockfd);
@@ -308,7 +308,7 @@ int handler(void* arg) {
         }
         debug_print("handler - request = %s\n", request);
 
-        if((return_code = parseRequest(request, path)) || (return_code =  parsePath(path, resp_info))) {
+        if((return_code =  parsePath(path, resp_info))) {
                 sendResponse(sockfd, return_code, path, resp_info);
                 freeResponseInfo(resp_info);
                 close(sockfd);
