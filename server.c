@@ -109,7 +109,7 @@ int handler(void*);
 int readRequest(char*, int);
 int parseRequest(char*, char*);
 int parsePath(char*, response_info_t*);
-int hasPermissions(struct stat*);
+int hasPermissions(char* path);
 
 //Response Handling
 int sendResponse(int, int, char*, response_info_t*);
@@ -417,7 +417,7 @@ int parsePath(char* path, response_info_t* resp_info) {
         debug_print("parsePath START - path = %s\n", path);
         int i;
         // char* absPath;// = (*(resp_info->absPath));
-        struct dirent** fileList;// = (*(resp_info->fileList));
+        struct dirent** fileList; // = (*(resp_info->fileList));
 
         replaceSubstring(path, "%20", " ");
         debug_print("path = %s\n", path);
@@ -453,7 +453,6 @@ int parsePath(char* path, response_info_t* resp_info) {
 
         }
 
-
         if(resp_info->isPathDir) {
 
                 if(absPath[strlen(absPath) - 1] != '/')
@@ -479,6 +478,11 @@ int parsePath(char* path, response_info_t* resp_info) {
 
                 debug_print("\tsFoundFile = %d\n", resp_info->foundFile);
 
+                if(hasPermissions(absPath)) {
+                        resp_info->foundFile = 0;
+                        return CODE_FORBIDDEN;
+                }
+
         } else { //path is file
 
                 //copy dir path
@@ -487,8 +491,9 @@ int parsePath(char* path, response_info_t* resp_info) {
                 memset(dir_path, 0, sizeof(dir_path));
                 strncat(dir_path, absPath, dir_path_length);
 
-                if(!S_ISREG(pathStats.st_mode) || access(absPath, R_OK) || access(dir_path, X_OK)) {
-
+                if(!S_ISREG(pathStats.st_mode) || hasPermissions(absPath)) {
+                        resp_info->isPathDir = 1; //dont write file.
+                        resp_info->foundFile = 0;
                         return CODE_FORBIDDEN;
                 }
 
@@ -753,7 +758,7 @@ char* getDirContents(response_info_t* resp_info) {
 
 
         char title[strlen(DIR_CONTENTS_TITLE) + strlen(path) + 1];
-        char body[SIZE_DIR_ENTITY * numOfFiles];
+        char body[SIZE_DIR_ENTITY * (numOfFiles + 1)];
 
         memset(title, 0, sizeof(title));
         memset(body, 0, sizeof(body));
@@ -765,8 +770,8 @@ char* getDirContents(response_info_t* resp_info) {
 
         for(i = 0; i < numOfFiles; i++) {
 
-                if(!strcmp(fileList[i]->d_name, ".") || !strcmp(fileList[i]->d_name, ".."))
-                        continue;
+                // if(!strcmp(fileList[i]->d_name, ".") || !strcmp(fileList[i]->d_name, ".."))
+                //         continue;
 
                 char tempPath[strlen(path) + strlen(fileList[i]->d_name) + 1];
                 memset(tempPath, 0, sizeof(tempPath));
@@ -997,6 +1002,40 @@ int replaceSubstring(char* str, char* orig, char* replace) {
         }
 
         debug_print("%s\n", "replaceSubstring END");
+        return 0;
+}
+
+/*********************************/
+/*********************************/
+/*********************************/
+
+int hasPermissions(char* path) {
+        debug_print("%s\n", "hasPermissions");
+
+        char temp[strlen(path) + 1];
+        memset(temp, 0, sizeof(temp));
+        strcat(temp, path);
+
+        char* t = strchr(temp, '/');
+        debug_print("\tpath = %s\n", t);
+
+        struct stat statbuf;
+        char* s;
+        debug_print("\t%s\n", "starting while loop");
+        while((s = strrchr(t, '/'))) {
+                debug_print("\t\tpath = %s\n", t);
+                stat(t, &statbuf);
+
+                if(S_ISDIR(statbuf.st_mode) && !(statbuf.st_mode & S_IXOTH)) {
+                        return -1;
+                }
+
+                else if(!(statbuf.st_mode & S_IROTH)) {
+                        return -1;
+                }
+                *s = 0;
+        }
+
         return 0;
 }
 
