@@ -53,6 +53,8 @@
 #define CODE_INTERNAL_ERROR 500
 #define CODE_NOT_SUPPORTED 501
 
+#define CODE_EMPTY_REQUEST 999
+
 /*********************************/
 /***** Response Code Strings *****/
 /*********************************/
@@ -302,7 +304,9 @@ int handler(void* arg) {
         memset(path, 0, sizeof(path));
 
         if((return_code = readRequest(request, sockfd)) || (return_code = parseRequest(request, path))) {
-                sendResponse(sockfd, return_code, NULL, resp_info);
+                if(return_code != CODE_EMPTY_REQUEST)
+                        sendResponse(sockfd, return_code, NULL, resp_info);
+
                 freeResponseInfo(resp_info);
                 close(sockfd);
                 return -1;
@@ -361,7 +365,7 @@ int readRequest(char* request, int sockfd) {
         }
         debug_print("\tbytes read = %d\n", bytes_read);
         if(!bytes_read)
-                return CODE_BAD;
+                return CODE_EMPTY_REQUEST;
 
         return 0;
 }
