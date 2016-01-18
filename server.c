@@ -91,6 +91,7 @@ typedef struct response_info_st {
         int numOfFiles;
         struct dirent** fileList;
         char* absPath;
+        char* root;
 } response_info_t;
 
 
@@ -109,7 +110,7 @@ int handler(void*);
 int readRequest(char*, int);
 int parseRequest(char*, char*);
 int parsePath(char*, response_info_t*);
-int hasPermissions(char* path);
+int hasPermissions(char*, char*);
 
 //Response Handling
 int sendResponse(int, int, char*, response_info_t*);
@@ -435,7 +436,7 @@ int parsePath(char* path, response_info_t* resp_info) {
         strcat(absPath, rootPath);
         strcat(absPath, path);
 
-        free(rootPath);
+        resp_info->root = rootPath;
         debug_print("absPath = %s\n", absPath);
 
         //Check path exists
@@ -478,8 +479,8 @@ int parsePath(char* path, response_info_t* resp_info) {
 
                 debug_print("\tsFoundFile = %d\n", resp_info->foundFile);
 
-                if(hasPermissions(absPath)) {
-                        resp_info->foundFile = 0;
+                if(hasPermissions(absPath, resp_info->root)) {
+                        resp_info->foundFile = 0; //dont write file
                         return CODE_FORBIDDEN;
                 }
 
@@ -491,7 +492,7 @@ int parsePath(char* path, response_info_t* resp_info) {
                 memset(dir_path, 0, sizeof(dir_path));
                 strncat(dir_path, absPath, dir_path_length);
 
-                if(!S_ISREG(pathStats.st_mode) || hasPermissions(absPath)) {
+                if(!S_ISREG(pathStats.st_mode) || hasPermissions(absPath, resp_info->root)) {
                         resp_info->isPathDir = 1; //dont write file.
                         resp_info->foundFile = 0;
                         return CODE_FORBIDDEN;
@@ -944,6 +945,7 @@ void initResponseInfo(response_info_t* resp_info) {
         resp_info->numOfFiles = 0;
         resp_info->fileList = NULL;
         resp_info->absPath = NULL;
+        resp_info->root = NULL;
 }
 
 /*********************************/
@@ -960,6 +962,11 @@ void freeResponseInfo(response_info_t* resp_info) {
         if(resp_info->absPath) {
                 debug_print("\t%s\n", "freeing sAbsPath");
                 free(resp_info->absPath);
+        }
+
+        if(resp_info->root) {
+                debug_print("\t%s\n", "freeing root");
+                free(resp_info->root);
         }
 
         if(resp_info->fileList) {
@@ -1009,7 +1016,7 @@ int replaceSubstring(char* str, char* orig, char* replace) {
 /*********************************/
 /*********************************/
 
-int hasPermissions(char* path) {
+int hasPermissions(char* path, char* root) {
         debug_print("%s\n", "hasPermissions");
 
         char temp[strlen(path) + 1];
@@ -1021,22 +1028,29 @@ int hasPermissions(char* path) {
 
         struct stat statbuf;
         char* s;
+        int flag = 0;
+
         debug_print("\t%s\n", "starting while loop");
         while((s = strrchr(t, '/'))) {
                 debug_print("\t\tpath = %s\n", t);
                 stat(t, &statbuf);
 
                 if(S_ISDIR(statbuf.st_mode) && !(statbuf.st_mode & S_IXOTH)) {
-                        return -1;
+                        flag = -1;
+                        break;
                 }
 
                 else if(!(statbuf.st_mode & S_IROTH)) {
-                        return -1;
+                        flag = -1;
+                        break;
                 }
+
+                if(!strcmp(root, t))
+                        break;
                 *s = 0;
         }
 
-        return 0;
+        return flag;
 }
 
 /******************************************************************************/
