@@ -32,6 +32,9 @@
 #define DEFAULT_FILE "index.html"
 #define DIR_CONTENTS_TITLE "Index of %s"
 
+/***********************/
+/***** Size Macros *****/
+/***********************/
 #define SIZE_READ_BUFFER 2
 #define SIZE_WRITE_BUFFER 512
 #define SIZE_REQUEST 4000
@@ -53,7 +56,7 @@
 #define CODE_INTERNAL_ERROR 500
 #define CODE_NOT_SUPPORTED 501
 
-#define CODE_EMPTY_REQUEST 999
+#define CODE_EMPTY_REQUEST 999 //browser sends empty request on dir-contents link hover
 
 /*********************************/
 /***** Response Code Strings *****/
@@ -379,6 +382,8 @@ int parseRequest(char* request, char* path) {
         debug_print("%s\n", "parseRequest START");
         char method[4];
         char protocol[64];
+        memset(method, 0, sizeof(method));
+        memset(protocol, 0, sizeof(protocol));
 
         //cut request at the first '\r' (replace with '\0')
         char* cut;
@@ -397,7 +402,7 @@ int parseRequest(char* request, char* path) {
                 return CODE_BAD;
 
         //extract path from HTTP/1.0 requests
-        //"host[:port]/path" - without http://
+        //"http://host[:port]/path" - remove http:// and find first '/'
         if(!strncmp(path, "http", 4)) {
 
                 debug_print("\t%s\n", "path containts http");
